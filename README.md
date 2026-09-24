@@ -1,7 +1,62 @@
-# qnocr-poc V0.3
+# qnocr-poc V0.4
 
 独立的千牛视觉采集实验：发现千牛窗口 → 捕获完整窗口 → 固定坐标裁剪 → chat_region 单次 OCR。
 使用 C# / .NET 8 / Windows；未接入或修改其他项目。
+
+## V0.4 变化检测模式
+
+新增 `Detection/ChatRegionChangeDetector.cs` 和 `Models/ChangeDetectionResult.cs`。
+新的监测模式只在聊天图发生显著变化时提取变化区域并 OCR；默认不带参数的命令保留 V0.3 单次完整流程。
+
+```powershell
+# 持续监测，Ctrl+C 停止
+dotnet run -- --watch
+
+# 有限采样，含首帧基线；本次实测采用此模式，不遗留后台监测
+dotnet run -- --watch --frames 3
+
+# 两张聊天区域截图离线比较：有变化则裁剪并 OCR，无变化则跳过
+dotnet run -- --compare previous_chat.png current_chat.png
+```
+
+监测绑定启动时找到的可见接待中心 HWND，使用 V0.2 的 1638×1100 固定布局。
+每次处理完成后等待 1000ms 再取下一帧，不并行运行 OCR，不承诺固定每秒帧数。
+首帧只建基线，不识别历史；随后比较相邻成功帧，每帧处理后更新上一帧。
+窗口关闭、最小化、捕获失败、尺寸不符或 OCR 失败时停止并报错，不自动切换到其他窗口。
+Ctrl+C 在当前不可取消的捕获/OCR 操作结束后停止；`--frames N` 按成功捕获帧数计数，N 必须大于 0。
+
+像素差定义：对每个像素取 B/G/R 三通道绝对差的最大值，大于 **24** 的像素计入差异。
+`DifferenceRatio = 差异像素数 / 全图像素数`，必须同时满足 **至少20像素** 和 **比例≥0.001** 才返回 Changed=true。
+透明通道不参与比较，不缩放、不降采样。阈值可通过检测器构造参数调整，当前 CLI 使用上述默认值。
+检测器返回 Changed、DifferenceRatio、ChangedRectangle、像素数、尺寸和耗时；
+无显著变化时 ChangedRectangle=null，但仍报告实际差异比例。不同尺寸或无效图会抛错。
+
+ChangedRectangle 为差异像素的最小包围框，相对聊天截图左上角。
+实际 OCR 裁剪为包围框 Y 范围上下各扩12px、宽度覆盖整个聊天区域的横带，边界裁到图内，
+以尽量保留完整文字行。精确差异框与 OCR 上下文框分开记录，不混淆两者。
+OCR 文本框坐标相对裁剪图；加上 change.json 中 OcrBoundsOriginInChat 即可映射回聊天图。
+
+变化样本保存到 `Output/Changes/change_*`（离线）或 `Output/Changes/session_*/change_*`（监测）：
+`previous.png`、`current.png`、`changed_region.png`、`change.json`。
+JSON 状态区分 PendingOcr / OcrCompleted / OcrFailed；OCR TXT/JSON 仍保存到 `Output/OCR`，路径打印在 Console。
+无变化不保存事件图、不调用 OCR；监测只循环覆盖两张临时聊天帧，成功裁剪后删除临时完整窗口截图。
+变化事件保留用于验收，长期运行时会占用磁盘；本版没有事件保留期限或后台服务。
+每个监测会话还保存 summary.json，记录帧数、变化次数、OCR 调用次数及退出状态。
+
+**像素变化不等于新消息。** 滚动、切换会话、头像/表情动画、已读状态都会触发；
+同一横带的未变文字可能再次进入 OCR，多处分散变化会被一个包围框合并。
+全局变化可能使横带覆盖整张聊天图，本版不尝试猜测哪部分属于新消息。
+低于阈值的微小修改、逐帧渐变可能漏检；没有稳定帧去抖、滚动补偿、消息身份识别或文本去重。
+
+验证命令及报告：
+
+```powershell
+dotnet run --project Validation/ChangeDetectionChecks/ChangeDetectionChecks.csproj
+dotnet run -- --compare Output/ValidationV04/previous_message.png Output/ValidationV04/current_message.png
+```
+
+检查程序无额外测试框架依赖，生成确定性帧对并验证差异框、阈值、边界和 OCR 调用门控。
+详见 [VALIDATION_V04.md](VALIDATION_V04.md)。
 
 ## 运行
 
@@ -25,7 +80,8 @@ dotnet run
 必须在千牛所在用户的交互桌面运行；受限沙箱或服务会话可能无法枚举窗口。
 本次沙箱内 EnumWindows 失败，在允许访问用户桌面的运行环境中成功。
 
-V0.3 默认 `dotnet run` 在捕获、裁剪成功后只对 `chat_region.png` 执行一次 OCR。
+默认 `dotnet run` 保留 V0.3 行为，在捕获、裁剪成功后对整个 `chat_region.png` 执行一次 OCR。
+需要仅识别变化区域时使用上面的 `--watch` 或 `--compare`。
 直接识别图片，无需千牛运行，也不要求固定尺寸：
 
 ```powershell
@@ -49,7 +105,7 @@ dotnet run -- --extract Output/qianniu_20260924_221542.png
 固定依赖：Sdcb.PaddleOCR / Models.Local 3.3.1，PaddleInference 3.3.1，
 Windows MKL runtime 3.3.1.70，OpenCvSharp 托管/原生包 4.11.0.20250507。
 
-- 每次命令新建 OCR 引擎，处理一张图后释放；不循环、不做变化检测或消息提取。
+- 每次 OCR 调用新建引擎，处理一张图后释放；V0.4 通过外层检测避免无变化时调用，引擎暂不复用。
 - 截图中的水平文字关闭旋转/180°分类；其他方向和复杂文档布局不在本版验收范围。
 - 输出按检测框中心 Y、X 排序，不推断买家/客服角色，不补全或修正模型输出。
 - 舍弃模型返回的空文本框；无效分数转为 null，平均置信度仅计算有效分数。
@@ -151,5 +207,5 @@ dotnet run 2>&1 | Tee-Object -FilePath Output/run.log
 截图和原始日志保留在本地 Output，不进入 Git。
 历史实测：V0.1 [VALIDATION.md](VALIDATION.md)，V0.2 [VALIDATION_V02.md](VALIDATION_V02.md)。
 
-范围止于 V0.3 单图 OCR；不包含实时循环/变化检测、AI 接口、Knowledge V2、SalesAgent、
+范围止于 V0.4 像素变化检测和变化区域 OCR；不包含 AI 接口、Knowledge V2、SalesAgent、
 自动回复、自动点击/发送、DLL 注入、进程内存读取、UI Automation 或 qnbot 集成。

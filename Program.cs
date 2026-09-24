@@ -5,15 +5,42 @@ using System.Text.Encodings.Web;
 using QnocrPoc.Capture;
 using QnocrPoc.Models;
 using QnocrPoc.OCR;
+using QnocrPoc.Detection;
 
 Console.OutputEncoding = Encoding.UTF8;
-Console.WriteLine("[QN OCR POC V0.3]");
+Console.WriteLine("[QN OCR POC V0.4]");
 Console.WriteLine($"Time: {DateTimeOffset.Now:O}");
 Console.WriteLine($"Runtime: {System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription}");
 var operation = "Capture";
 
 try
 {
+    if (args.Length == 3 && args[0] == "--compare")
+    {
+        operation = "Change detection";
+        new ChatRegionChangePipeline().Process(args[1], args[2], Path.Combine("Output", "Changes"), RunOcr, Console.WriteLine);
+        return 0;
+    }
+
+    if (args.Length > 0 && args[0] == "--watch")
+    {
+        int? maximumFrames = null;
+        if (args.Length == 3 && args[1] == "--frames" && int.TryParse(args[2], out var count) && count > 0)
+            maximumFrames = count;
+        else if (args.Length != 1)
+        {
+            Console.Error.WriteLine("Usage: dotnet run -- --watch [--frames positive-count]");
+            return 2;
+        }
+        operation = "Watch";
+        using var cancellation = new CancellationTokenSource();
+        ConsoleCancelEventHandler handler = (_, e) => { e.Cancel = true; cancellation.Cancel(); };
+        Console.CancelKeyPress += handler;
+        try { await new ChatRegionMonitor().RunAsync(maximumFrames, RunOcr, cancellation.Token); }
+        finally { Console.CancelKeyPress -= handler; }
+        return 0;
+    }
+
     if (args.Length == 2 && args[0] == "--ocr")
     {
         operation = "OCR";
@@ -35,7 +62,7 @@ try
         requestedHandle = (nint)handle;
     else if (args.Length != 0 && !(args.Length == 1 && args[0] == "--list"))
     {
-        Console.Error.WriteLine("Usage: dotnet run [-- --list | -- --hwnd 0xHEX | -- --extract screenshot.png | -- --ocr image.png]");
+        Console.Error.WriteLine("Usage: dotnet run [-- --list | -- --hwnd 0xHEX | -- --extract screenshot.png | -- --ocr image.png | -- --compare previous.png current.png | -- --watch [--frames N]]");
         return 2;
     }
 
