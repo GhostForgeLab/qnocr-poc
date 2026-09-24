@@ -7,10 +7,10 @@ namespace QnocrPoc.Capture;
 public sealed class QianniuRegionExtractor
 {
     /// <summary>
-    /// Writes four PNGs using exact pixel coordinates. Existing region outputs are replaced.
+    /// Resolves normalized coordinates against the input size and writes four PNGs without resizing pixels.
     /// Validates every rectangle before writing; leaves the source PNG unchanged.
     /// </summary>
-    public IReadOnlyList<string> Extract(string screenshotPath, string outputDirectory, QianniuLayout layout)
+    public IReadOnlyList<string> Extract(string screenshotPath, string outputDirectory, QianniuLayoutRatio layout)
     {
         ArgumentNullException.ThrowIfNull(layout);
         var sourcePath = Path.GetFullPath(screenshotPath);
@@ -18,12 +18,7 @@ public sealed class QianniuRegionExtractor
         using var source = new Bitmap(sourcePath);
         if (source.RawFormat.Guid != ImageFormat.Png.Guid)
             throw new ArgumentException("The source screenshot must be a PNG.", nameof(screenshotPath));
-        if (source.Size != layout.ScreenshotSize)
-            throw new ArgumentException(
-                $"Fixed layout requires {layout.ScreenshotSize.Width}x{layout.ScreenshotSize.Height}; " +
-                $"source is {source.Width}x{source.Height}. No automatic scaling is applied.", nameof(screenshotPath));
-
-        var regions = layout.GetRegions();
+        var regions = layout.Resolve(source.Size).GetRegions();
         foreach (var (fileName, bounds) in regions)
         {
             // Use long arithmetic to reject even coordinates that would overflow Rectangle.Right/Bottom.

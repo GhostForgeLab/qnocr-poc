@@ -8,44 +8,66 @@ namespace QnocrPoc.Detection;
 
 public sealed class ChatRegionMonitor
 {
+    private readonly Func<string, Task<CaptureResult>>? _captureFrame;
+
+    // An optional frame source enables deterministic resize/cancellation validation without UI actions.
+    public ChatRegionMonitor(Func<string, Task<CaptureResult>>? captureFrame = null) => _captureFrame = captureFrame;
+
     public async Task RunAsync(int? maximumFrames, Action<string> runOcr, CancellationToken cancellationToken)
     {
-        var capture = new QianniuWindowCapture();
-        var window = capture.FindWindows(Console.WriteLine).FirstOrDefault(w =>
-            w.IsVisible && !w.IsMinimized && !w.IsCloaked && w.WindowTitle.Contains("接待中心", StringComparison.Ordinal))
-            ?? throw new InvalidOperationException("No visible reception center found. Restore the Qianniu chat window and retry.");
-        var layout = new QianniuLayout();
+        var captureFrame = _captureFrame;
+        var sourceDescription = "Supplied frame source";
+        if (captureFrame is null)
+        {
+            var capture = new QianniuWindowCapture();
+            var window = capture.FindWindows(Console.WriteLine).FirstOrDefault(w =>
+                w.IsVisible && !w.IsMinimized && !w.IsCloaked && w.WindowTitle.Contains("接待中心", StringComparison.Ordinal))
+                ?? throw new InvalidOperationException("No visible reception center found. Restore the Qianniu chat window and retry.");
+            sourceDescription = $"Watching HWND: 0x{window.Hwnd:X}";
+            captureFrame = directory => capture.CaptureAsync(window, directory);
+        }
+        var layout = new QianniuLayoutRatio();
         var pipeline = new ChatRegionChangePipeline();
         var session = Path.GetFullPath(Path.Combine("Output", "Changes", $"session_{DateTime.Now:yyyyMMdd_HHmmss}_{Guid.NewGuid():N}"));
         var scratch = Path.Combine(session, "frames");
         Directory.CreateDirectory(scratch);
-        Console.WriteLine($"Watching HWND: 0x{window.Hwnd:X}\nSession: {session}\nInterval: 1000 ms after processing; first frame is baseline only. Ctrl+C stops after the current operation.");
+        Console.WriteLine($"{sourceDescription}\nSession: {session}\nInterval: 1000 ms after processing; first frame is baseline only. Ctrl+C stops after the current operation.");
         string? previousPath = null;
+        Size? previousFrameSize = null;
         var frames = 0;
         var changes = 0;
         var ocrCalls = 0;
+        var baselineResets = 0;
         var status = "Completed";
         try
         {
             while (maximumFrames is null || frames < maximumFrames)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var captureResult = await capture.CaptureAsync(window, scratch);
+                var captureResult = await captureFrame(scratch);
                 if (!captureResult.Success || captureResult.SavedPath is null)
                     throw new InvalidOperationException(captureResult.Message);
                 var currentPath = Path.Combine(scratch, $"chat_{frames % 2}.png");
+                Size currentFrameSize;
+                Rectangle chatBounds;
                 try
                 {
                     using var full = new Bitmap(captureResult.SavedPath);
-                    if (full.Size != layout.ScreenshotSize)
-                        throw new InvalidOperationException($"Watch layout requires 1638x1100; captured {full.Width}x{full.Height}. Recalibration required.");
-                    using var chat = full.Clone(layout.ChatRegion, full.PixelFormat);
+                    currentFrameSize = full.Size;
+                    chatBounds = layout.Resolve(currentFrameSize).ChatRegion;
+                    using var chat = full.Clone(chatBounds, full.PixelFormat);
                     chat.Save(currentPath, ImageFormat.Png);
                 }
                 finally { File.Delete(captureResult.SavedPath); }
                 frames++;
                 Console.WriteLine($"\nFrame {frames}: {DateTimeOffset.Now:O}");
+                Console.WriteLine($"Window size: {currentFrameSize.Width}x{currentFrameSize.Height}; Chat rectangle: {chatBounds}");
                 if (previousPath is null) Console.WriteLine("Baseline established. OCR skipped.");
+                else if (previousFrameSize != currentFrameSize)
+                {
+                    baselineResets++;
+                    Console.WriteLine("Window size changed. Baseline reset; OCR skipped for this frame.");
+                }
                 else
                 {
                     pipeline.Process(previousPath, currentPath, session, path =>
@@ -57,6 +79,7 @@ public sealed class ChatRegionMonitor
                     }, Console.WriteLine);
                 }
                 previousPath = currentPath;
+                previousFrameSize = currentFrameSize;
                 if (maximumFrames is null || frames < maximumFrames)
                     await Task.Delay(1000, cancellationToken);
             }
@@ -72,9 +95,9 @@ public sealed class ChatRegionMonitor
         }
         finally
         {
-            var summary = new { Status = status, FramesCaptured = frames, ChangedFrames = changes, OcrCalls = ocrCalls };
+            var summary = new { Status = status, FramesCaptured = frames, BaselineResets = baselineResets, ChangedFrames = changes, OcrCalls = ocrCalls };
             File.WriteAllText(Path.Combine(session, "summary.json"), JsonSerializer.Serialize(summary, new JsonSerializerOptions { WriteIndented = true }));
-            Console.WriteLine($"Watch stopped: {status}; Frames={frames}; ChangedFrames={changes}; OCR calls={ocrCalls}");
+            Console.WriteLine($"Watch stopped: {status}; Frames={frames}; BaselineResets={baselineResets}; ChangedFrames={changes}; OCR calls={ocrCalls}");
         }
     }
 }

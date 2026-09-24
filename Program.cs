@@ -8,7 +8,7 @@ using QnocrPoc.OCR;
 using QnocrPoc.Detection;
 
 Console.OutputEncoding = Encoding.UTF8;
-Console.WriteLine("[QN OCR POC V0.4]");
+Console.WriteLine("[QN OCR POC V0.5]");
 Console.WriteLine($"Time: {DateTimeOffset.Now:O}");
 Console.WriteLine($"Runtime: {System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription}");
 var operation = "Capture";
@@ -111,10 +111,12 @@ catch (Exception ex)
 
 static IReadOnlyList<string> ExtractRegions(string screenshotPath)
 {
-    var layout = new QianniuLayout();
+    var layout = new QianniuLayoutRatio();
     Console.WriteLine($"\nRegion source: {Path.GetFullPath(screenshotPath)}");
-    Console.WriteLine("Layout: fixed 1638x1100 reception center; manually calibrated pixel coordinates, no scaling.");
-    foreach (var (fileName, bounds) in layout.GetRegions())
+    QianniuLayout resolved;
+    using (var image = new System.Drawing.Bitmap(screenshotPath)) resolved = layout.Resolve(image.Size);
+    Console.WriteLine($"Layout: normalized ratios resolved for {resolved.ScreenshotSize.Width}x{resolved.ScreenshotSize.Height}; source pixels are not resized.");
+    foreach (var (fileName, bounds) in resolved.GetRegions())
         Console.WriteLine($"{fileName}: X={bounds.X}, Y={bounds.Y}, Width={bounds.Width}, Height={bounds.Height}");
     var paths = new QianniuRegionExtractor().Extract(screenshotPath,
         Path.Combine(Environment.CurrentDirectory, "Output", "Regions"), layout);

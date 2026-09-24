@@ -1,7 +1,12 @@
-# qnocr-poc V0.4
+# qnocr-poc V0.5
 
-独立的千牛视觉采集实验：发现千牛窗口 → 捕获完整窗口 → 固定坐标裁剪 → chat_region 单次 OCR。
+独立的千牛视觉采集实验：发现千牛窗口 → 捕获完整窗口 → 比例布局裁剪 → chat_region OCR / 变化监测。
 使用 C# / .NET 8 / Windows；未接入或修改其他项目。
+
+V0.5 使用 `QianniuLayoutRatio` 的归一化坐标，不再要求截图为1638×1100。
+1638×949实测已通过截图、裁剪、OCR和有限帧监测。窗口尺寸改变时重建监测基线，
+跳过该帧OCR，下一帧继续检测，避免把尺寸变化当作新增内容。
+详见 [VALIDATION_V05.md](VALIDATION_V05.md)。
 
 ## V0.4 变化检测模式
 
@@ -19,10 +24,12 @@ dotnet run -- --watch --frames 3
 dotnet run -- --compare previous_chat.png current_chat.png
 ```
 
-监测绑定启动时找到的可见接待中心 HWND，使用 V0.2 的 1638×1100 固定布局。
+监测绑定启动时找到的可见接待中心 HWND，每帧按当前完整截图尺寸解析比例布局。
 每次处理完成后等待 1000ms 再取下一帧，不并行运行 OCR，不承诺固定每秒帧数。
 首帧只建基线，不识别历史；随后比较相邻成功帧，每帧处理后更新上一帧。
-窗口关闭、最小化、捕获失败、尺寸不符或 OCR 失败时停止并报错，不自动切换到其他窗口。
+窗口关闭、最小化、捕获失败、无效布局或 OCR 失败时停止并报错，不自动切换到其他窗口。
+窗口尺寸变化时重新计算区域并重建基线；即使新旧聊天裁剪尺寸恰好相同，也不比较缩放前后的画面。
+重建基线的那一帧不执行OCR，因此同帧到达的消息也不会被当作变化输出。
 Ctrl+C 在当前不可取消的捕获/OCR 操作结束后停止；`--frames N` 按成功捕获帧数计数，N 必须大于 0。
 
 像素差定义：对每个像素取 B/G/R 三通道绝对差的最大值，大于 **24** 的像素计入差异。
@@ -41,7 +48,7 @@ OCR 文本框坐标相对裁剪图；加上 change.json 中 OcrBoundsOriginInCha
 JSON 状态区分 PendingOcr / OcrCompleted / OcrFailed；OCR TXT/JSON 仍保存到 `Output/OCR`，路径打印在 Console。
 无变化不保存事件图、不调用 OCR；监测只循环覆盖两张临时聊天帧，成功裁剪后删除临时完整窗口截图。
 变化事件保留用于验收，长期运行时会占用磁盘；本版没有事件保留期限或后台服务。
-每个监测会话还保存 summary.json，记录帧数、变化次数、OCR 调用次数及退出状态。
+每个监测会话还保存 summary.json，记录帧数、尺寸变化导致的 BaselineResets、变化次数、OCR 调用次数及退出状态。
 
 **像素变化不等于新消息。** 滚动、切换会话、头像/表情动画、已读状态都会触发；
 同一横带的未变文字可能再次进入 OCR，多处分散变化会被一个包围框合并。
@@ -56,11 +63,11 @@ dotnet run -- --compare Output/ValidationV04/previous_message.png Output/Validat
 ```
 
 检查程序无额外测试框架依赖，生成确定性帧对并验证差异框、阈值、边界和 OCR 调用门控。
-详见 [VALIDATION_V04.md](VALIDATION_V04.md)。
+历史记录见 [VALIDATION_V04.md](VALIDATION_V04.md)；V0.5检查扩展了比例布局、像素一致性和尺寸切换回放。
 
 ## 运行
 
-在 Windows 交互桌面安装 .NET 8 SDK，展开 1638×1100 的千牛接待中心，在项目根目录运行：
+在 Windows 交互桌面安装 .NET 8 SDK，展开千牛接待中心，在项目根目录运行：
 
 ```powershell
 dotnet run
@@ -134,31 +141,37 @@ dotnet run -- --ocr Output/OCR/Fixtures/mixed_characters_28px.png
 技术来源：[PaddleSharp OCR](https://github.com/sdcb/PaddleSharp/blob/master/docs/ocr.md)、
 [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR)。
 
-## 固定区域布局
+## 比例区域布局
 
-`Models/QianniuLayout.cs` 定义四个 Rectangle；`Capture/QianniuRegionExtractor.cs`
-从完整 PNG 逐像素裁剪，不缩放、不做 OCR、AI 或视觉检测。
+`Models/QianniuLayoutRatio.cs` 定义 BuyerList / Chat / Product / Input 的 Left、Top、Width、Height 比例属性。
+所有配置均在0..1范围内，生产布局不再包含固定像素矩形或硬编码截图尺寸。
+`Resolve(Size)` 返回 `QianniuLayout`，后者仅承载当前截图解析出的像素矩形，没有默认固定坐标。
+`Capture/QianniuRegionExtractor.cs` 按解析结果裁剪原始像素，不拉伸或重采样原图。
 
-原任务的 2226×1253 是工作台尺寸。重新捕获接待中心发现实际为 1638×1100，
-经用户明确选择，V0.2 改按该实际尺寸人工校准。坐标相对 PNG 左上角 (0, 0)，单位为物理像素；
-右/下边界不包含在区域内，即 [X, X+宽) × [Y, Y+高)。
+默认比例由V0.2参考布局归一化得到；下表仅展示六位小数，源码保留更多有效位。
 
-| 属性 | X | Y | 宽 | 高 | 输出 |
+| 区域 | Left | Top | Width | Height | 输出 |
 | --- | ---: | ---: | ---: | ---: | --- |
-| BuyerListRegion | 80 | 120 | 300 | 980 | buyer_list_region.png |
-| ChatRegion | 380 | 181 | 654 | 537 | chat_region.png |
-| ProductRegion | 1034 | 120 | 604 | 924 | product_region.png |
-| InputRegion | 380 | 718 | 654 | 382 | input_region.png |
+| BuyerList | 0.048840 | 0.109091 | 0.183150 | 0.890909 | buyer_list_region.png |
+| Chat | 0.231990 | 0.164545 | 0.399267 | 0.488182 | chat_region.png |
+| Product | 0.631258 | 0.109091 | 0.368742 | 0.840000 | product_region.png |
+| Input | 0.231990 | 0.652727 | 0.399267 | 0.347273 | input_region.png |
 
-买家列表包含搜索、列表筛选和会话列表，不含蓝色导航栏。
-聊天区域包含当前可见的消息历史，不含聊天对象标题和输入工具栏。
-商品区域包含右侧标签页和商品/订单面板，不含底部客服工具栏；只截当前显示内容。
-输入区域包含编辑区、输入工具栏以及关闭/发送按钮；不触发任何交互。
+换算分别对四条边取整：left=round(Left×W)、right=round((Left+Width)×W)，
+top/bottom同理；.5向远离零方向取整，宽高由边界相减，避免独立取整宽高造成默认共享边界缝隙。
+右/下边界不包含在区域内，坐标相对完整 PNG 左上角。
+只对浮点舍入引起的1e-12以内归一化边界误差作容差；非法、负值、NaN/Infinity、越界或取整后为空的区域会报错。
+
+目标区域仍是买家列表、消息历史、右侧商品/订单面板和输入区。
+**比例适配不等于界面元素的精确定位**：千牛标题栏、工具栏等并非随窗口等比缩放。
+1638×949实测可见消息与商品内容，但聊天图顶部夹入部分标题栏残留，输入区上缘多出少量消息区空白；
+商品图边缘也含少量相邻栏。自适应解决了尺寸硬限制，尚不能保证所有尺寸/DPI/面板拖动后的语义边界准确。
+不进行AI/视觉锚点识别、不自动调整窗口；实际比例可在模型属性中调整。
 
 四张 PNG 写入当前目录的 `Output/Regions/`，再次运行会替换同名区域图，原图不变。
-提取前检查 PNG 格式、准确尺寸、全部区域边界以及源文件/输出路径冲突。
-尺寸不匹配或坐标越界会失败，且不写入任何新区域图；上一次的区域图可能仍在目录中，
-应以本次成功日志判断输出是否更新。布局变动或 DPI 变化后需人工重新校准，程序不自动识别页面。
+提取前检查 PNG 格式、有效尺寸、全部比例/区域边界以及源文件/输出路径冲突。
+全部区域验证通过后才写入；失败时上一次区域图可能仍在目录中，应以本次成功日志判断输出是否更新。
+比例计算不验证截图的页面身份；离线提取须提供接待中心截图，不能把工作台截图视为同一布局。
 
 ## 窗口发现与选择
 
@@ -207,5 +220,5 @@ dotnet run 2>&1 | Tee-Object -FilePath Output/run.log
 截图和原始日志保留在本地 Output，不进入 Git。
 历史实测：V0.1 [VALIDATION.md](VALIDATION.md)，V0.2 [VALIDATION_V02.md](VALIDATION_V02.md)。
 
-范围止于 V0.4 像素变化检测和变化区域 OCR；不包含 AI 接口、Knowledge V2、SalesAgent、
+范围止于 V0.5 比例布局适配；不包含 AI 接口、Knowledge V2、SalesAgent、
 自动回复、自动点击/发送、DLL 注入、进程内存读取、UI Automation 或 qnbot 集成。
