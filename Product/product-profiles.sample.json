@@ -1,0 +1,15 @@
+{
+  "SchemaVersion": 1,
+  "IsTestCatalog": true,
+  "Profiles": [
+    {
+      "ProductId": "1051087533910",
+      "ProfileKey": "poc-sample-1051087533910",
+      "DisplayName": "POC测试映射：仅验证ID查表，非真实商品知识",
+      "IsTestData": true,
+      "Attributes": {
+        "Purpose": "V0.7精确ID映射验证；不提供真实规格、库存、价格或销售建议"
+      }
+    }
+  ]
+}

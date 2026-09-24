@@ -1,7 +1,66 @@
-# qnocr-poc V0.6
+# qnocr-poc V0.7
 
-独立的千牛视觉采集实验：发现千牛窗口 → 捕获完整窗口 → 混合布局定位与裁剪 → chat_region OCR / 变化监测。
+独立的千牛视觉采集实验：窗口捕获 → 混合布局裁剪 → 聊天/商品OCR → 商品ID提取与本地ProductProfile映射。
 使用 C# / .NET 8 / Windows；未接入或修改其他项目。
+
+## V0.7 商品上下文
+
+新增 `Product/ProductIdExtractor.cs`、`Product/ProductContextResolver.cs`、
+`Models/ProductContext.cs` 和 `Models/ProductProfile.cs`。
+用户已选择本地测试映射；默认数据为 `Product/product-profiles.sample.json`，
+Catalog与Profile均显式标记测试数据，不包含真实规格、库存或价格，也不连接qnbot/Knowledge V2。
+
+```powershell
+# 对已有右侧商品区域执行OCR、提取ID、查询随程序提供的测试映射
+dotnet run -- --product Output/Regions/product_region.png
+
+# 显式指定本地JSON映射表
+dotnet run -- --product Output/Regions/product_region.png --profiles Product/product-profiles.sample.json
+
+# 默认完整流程：捕获、布局、裁剪、聊天OCR，再执行商品OCR和测试映射
+dotnet run
+```
+
+原 `--ocr` 仍只识别文字，`--layout` / `--extract` 不进行商品匹配，`--watch` 仍仅监测聊天变化，
+没有新增循环商品OCR。默认映射文件从程序输出目录读取，构建/发布时自动复制，可独立部署。
+
+识别规则：
+
+- 必须有ID类标签，支持 ID / 商品ID / 宝贝ID / 产品ID、相应“编号”标签及item_id/itemid。
+- 本POC接受连续10–16位ASCII数字，保持字符串（保留前导零）；此范围是可调整的POC策略，不是完整平台ID规范。
+- 只归一化全角ASCII/空格；不把O猜成0、不把I猜成1，不拼接数字内部的空格。
+- 支持标签和纯数字分为两个OCR框，但必须同一行、右侧相邻；不跨行关联搜索框与号码。
+- 忽略订单/交易/用户/店铺/SKU等其他编号上下文、未带标签的长数字、搜索框占位提示、价格/库存。
+  这是保守规则，不能识别任意文案的业务语义。
+- 默认最低OCR证据分数0.80。完整行使用该行分数，分框标签和值取较低分数；无分数/无效分数不匹配。
+- 相同ID去重，采用最高分的支持证据，不累加分数。多个不同ID返回Ambiguous，即使只有其中一个在目录中也不自动选它。
+- 只做精确ID查表，不模糊匹配、不用商品标题猜ID，不把Profile命中当作OCR正确性证明。
+
+状态：Matched、Unmapped、NotFound、LowConfidence、Ambiguous。
+后面三种状态的ProductId不作为确定结果输出，候选及证据保留在Extraction中；
+Unmapped保留已识别ID但Profile=null。Confidence是支持该ID的OCR行分数，不是准确率或知识库匹配概率。
+
+JSON映射格式如下，字段严格校验，重复ID、错误版本、非法ID和不一致的测试标记会报错：
+
+```json
+{
+  "SchemaVersion": 1,
+  "IsTestCatalog": true,
+  "Profiles": [
+    {
+      "ProductId": "1051087533910",
+      "ProfileKey": "poc-sample-1051087533910",
+      "DisplayName": "POC测试映射，非真实商品知识",
+      "IsTestData": true,
+      "Attributes": { "Purpose": "仅验证精确ID映射" }
+    }
+  ]
+}
+```
+
+结果保存到 `Output/Product/product_context_<时间>.json`，包含输入路径、Context和原始OCR数据；
+原OCR TXT/JSON继续写入 `Output/OCR`。详细实测见 [VALIDATION_V07.md](VALIDATION_V07.md)。
+识别到唯一可见ID不代表确认了买家正在咨询的商品；未展示的卡片、分页或遮挡内容不会被自动读取。
 
 ## V0.6 布局解析与诊断
 
@@ -134,7 +193,7 @@ dotnet run
 必须在千牛所在用户的交互桌面运行；受限沙箱或服务会话可能无法枚举窗口。
 本次沙箱内 EnumWindows 失败，在允许访问用户桌面的运行环境中成功。
 
-默认 `dotnet run` 保留 V0.3 行为，在捕获、裁剪成功后对整个 `chat_region.png` 执行一次 OCR。
+默认 `dotnet run` 在捕获、裁剪成功后先对 `chat_region.png` 执行OCR，再执行V0.7商品上下文流程。
 需要仅识别变化区域时使用上面的 `--watch` 或 `--compare`。
 直接识别图片，无需千牛运行，也不要求固定尺寸：
 
@@ -254,7 +313,8 @@ PrintWindow 是同步调用，依赖目标应用绘制；API 成功不等于 CEF
 
 截图：当前工作目录的 `Output/qianniu_yyyyMMdd_HHmmss.png`。
 同一秒文件名冲突时增加毫秒和唯一后缀，避免覆盖已有样本。
-退出码：0 完整流程成功（或仅 OCR/提取/列举成功），1 捕获/裁剪/OCR 失败，2 参数错误。
+退出码：0 成功（商品模式表示Matched，原有独立命令保持各自成功含义）；
+1 捕获/裁剪/OCR/目录读取失败；2 参数错误；3 商品识别/查表已完成但未可靠匹配（具体原因见Status）。
 
 保留运行日志：
 
@@ -267,5 +327,5 @@ dotnet run 2>&1 | Tee-Object -FilePath Output/run.log
 截图和原始日志保留在本地 Output，不进入 Git。
 历史实测：V0.1 [VALIDATION.md](VALIDATION.md)，V0.2 [VALIDATION_V02.md](VALIDATION_V02.md)。
 
-范围止于 V0.6 布局定位增强。UIA仅用于几何定位；不读取UIA聊天文本。
+范围止于 V0.7 商品ID与本地测试ProductProfile映射。UIA仍仅用于几何定位，不读取消息或商品ID文本。
 不包含AI接口、Knowledge V2、SalesAgent、自动回复、自动点击/发送、DLL注入、进程内存读取或qnbot集成。

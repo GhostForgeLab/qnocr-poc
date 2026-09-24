@@ -103,4 +103,5 @@ var message = detector.Detect(Path.Combine(root, "previous_message.png"), Path.C
 Check(message.Changed && message.ChangedRectangle is { Top: > 160, Bottom: < 230 }, "new message fixture change excludes the old message");
 await LayoutChecks.RunAsync(Check);
 await ResolverChecks.RunAsync(Check);
-Console.WriteLine($"Passed {passed} checks (V0.4 + V0.5 + V0.6). Fixtures: {root}");
+ProductChecks.Run(Check);
+Console.WriteLine($"Passed {passed} checks (V0.4 through V0.7). Fixtures: {root}");

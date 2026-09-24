@@ -7,15 +7,27 @@ using QnocrPoc.Models;
 using QnocrPoc.OCR;
 using QnocrPoc.Detection;
 using QnocrPoc.Layout;
+using QnocrPoc.Product;
 
 Console.OutputEncoding = Encoding.UTF8;
-Console.WriteLine("[QN OCR POC V0.6]");
+Console.WriteLine("[QN OCR POC V0.7]");
 Console.WriteLine($"Time: {DateTimeOffset.Now:O}");
 Console.WriteLine($"Runtime: {System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription}");
 var operation = "Capture";
 
 try
 {
+    if (args.Length > 0 && args[0] == "--product")
+    {
+        if (!(args.Length == 2 || args.Length == 4 && args[2] == "--profiles"))
+        {
+            Console.Error.WriteLine("Usage: dotnet run -- --product image.png [--profiles catalog.json]");
+            return 2;
+        }
+        operation = "Product context";
+        return RunProduct(args[1], args.Length == 4 ? args[3] : null);
+    }
+
     if (args.Length == 1 && args[0] == "--uia-geometry")
     {
         operation = "UIA geometry";
@@ -76,7 +88,7 @@ try
         requestedHandle = (nint)handle;
     else if (args.Length != 0 && !(args.Length == 1 && args[0] is "--list" or "--layout"))
     {
-        Console.Error.WriteLine("Usage: dotnet run [-- --list | -- --layout | -- --uia-geometry | -- --hwnd 0xHEX | -- --extract screenshot.png | -- --ocr image.png | -- --compare previous.png current.png | -- --watch [--frames N]]");
+        Console.Error.WriteLine("Usage: dotnet run [-- --list | -- --layout | -- --uia-geometry | -- --hwnd 0xHEX | -- --extract screenshot.png | -- --ocr image.png | -- --product image.png [--profiles catalog.json] | -- --compare previous.png current.png | -- --watch [--frames N]]");
         return 2;
     }
 
@@ -116,7 +128,8 @@ try
     if (args.Contains("--layout")) return 0;
     operation = "OCR";
     RunOcr(regions.Single(path => Path.GetFileName(path) == "chat_region.png"));
-    return 0;
+    operation = "Product context";
+    return RunProduct(regions.Single(path => Path.GetFileName(path) == "product_region.png"));
 }
 catch (Exception ex)
 {
@@ -140,6 +153,11 @@ static async Task<IReadOnlyList<string>> ExtractRegions(string screenshotPath, Q
 
 static void RunOcr(string imagePath)
 {
+    RunOcrAndSave(imagePath);
+}
+
+static OcrResult RunOcrAndSave(string imagePath)
+{
     Console.WriteLine($"\nOCR Input:\n{Path.GetFullPath(imagePath)}");
     var result = new PaddleOcrService().Recognize(imagePath);
     Console.WriteLine($"Model: {result.Model}\n\nResult:");
@@ -161,4 +179,22 @@ static void RunOcr(string imagePath)
     }), new UTF8Encoding(false));
     File.WriteAllText(prefix + ".txt", result.Text, new UTF8Encoding(false));
     Console.WriteLine($"OCR Success\nSaved: {prefix}.json\nSaved: {prefix}.txt");
+    return result;
+}
+
+static int RunProduct(string imagePath, string? catalogPath = null)
+{
+    catalogPath ??= Path.Combine(AppContext.BaseDirectory, "Product", "product-profiles.sample.json");
+    var resolver = new ProductContextResolver(catalogPath);
+    Console.WriteLine($"\nProduct catalog: {resolver.CatalogPath}\nTest catalog: {resolver.IsTestCatalog}");
+    var ocr = RunOcrAndSave(imagePath);
+    var context = resolver.Resolve(ocr);
+    var options = new JsonSerializerOptions { WriteIndented = true, Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
+    var json = JsonSerializer.Serialize(context, options);
+    Console.WriteLine($"\nProduct Context:\n{json}");
+    Directory.CreateDirectory("Output/Product");
+    var path = Path.GetFullPath(Path.Combine("Output", "Product", $"product_context_{DateTime.Now:yyyyMMdd_HHmmss_fff}.json"));
+    File.WriteAllText(path, JsonSerializer.Serialize(new { ImagePath = Path.GetFullPath(imagePath), Context = context, Ocr = ocr }, options), new UTF8Encoding(false));
+    Console.WriteLine($"Product context saved: {path}");
+    return context.Status == ProductContextStatus.Matched ? 0 : 3;
 }
