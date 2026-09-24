@@ -13,12 +13,20 @@ public sealed class QianniuRegionExtractor
     public IReadOnlyList<string> Extract(string screenshotPath, string outputDirectory, QianniuLayoutRatio layout)
     {
         ArgumentNullException.ThrowIfNull(layout);
+        using var image = new Bitmap(screenshotPath);
+        return Extract(screenshotPath, outputDirectory, layout.Resolve(image.Size));
+    }
+
+    public IReadOnlyList<string> Extract(string screenshotPath, string outputDirectory, QianniuLayout layout)
+    {
+        ArgumentNullException.ThrowIfNull(layout);
         var sourcePath = Path.GetFullPath(screenshotPath);
         var targetDirectory = Path.GetFullPath(outputDirectory);
         using var source = new Bitmap(sourcePath);
         if (source.RawFormat.Guid != ImageFormat.Png.Guid)
             throw new ArgumentException("The source screenshot must be a PNG.", nameof(screenshotPath));
-        var regions = layout.Resolve(source.Size).GetRegions();
+        if (source.Size != layout.ScreenshotSize) throw new ArgumentException("Resolved layout does not match screenshot size.", nameof(layout));
+        var regions = layout.GetRegions();
         foreach (var (fileName, bounds) in regions)
         {
             // Use long arithmetic to reject even coordinates that would overflow Rectangle.Right/Bottom.

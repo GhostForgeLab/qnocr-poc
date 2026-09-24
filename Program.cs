@@ -6,15 +6,29 @@ using QnocrPoc.Capture;
 using QnocrPoc.Models;
 using QnocrPoc.OCR;
 using QnocrPoc.Detection;
+using QnocrPoc.Layout;
 
 Console.OutputEncoding = Encoding.UTF8;
-Console.WriteLine("[QN OCR POC V0.5]");
+Console.WriteLine("[QN OCR POC V0.6]");
 Console.WriteLine($"Time: {DateTimeOffset.Now:O}");
 Console.WriteLine($"Runtime: {System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription}");
 var operation = "Capture";
 
 try
 {
+    if (args.Length == 1 && args[0] == "--uia-geometry")
+    {
+        operation = "UIA geometry";
+        var target = new QianniuWindowCapture().FindWindows(Console.WriteLine).First(w =>
+            w.IsVisible && !w.IsMinimized && !w.IsCloaked && w.WindowTitle.Contains("接待中心", StringComparison.Ordinal));
+        var geometry = await new UiaGeometryProbe().ReadAsync(target, target.WindowBounds.Size);
+        Directory.CreateDirectory("Output/Layout");
+        var json = JsonSerializer.Serialize(geometry, new JsonSerializerOptions { WriteIndented = true });
+        File.WriteAllText("Output/Layout/uia_geometry.json", json);
+        Console.WriteLine(json);
+        return 0;
+    }
+
     if (args.Length == 3 && args[0] == "--compare")
     {
         operation = "Change detection";
@@ -51,7 +65,7 @@ try
     if (args.Length == 2 && args[0] == "--extract")
     {
         operation = "Region extraction";
-        ExtractRegions(args[1]);
+        await ExtractRegions(args[1]);
         return 0;
     }
 
@@ -60,9 +74,9 @@ try
         long.TryParse(args[1].Replace("0x", "", StringComparison.OrdinalIgnoreCase),
             NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var handle))
         requestedHandle = (nint)handle;
-    else if (args.Length != 0 && !(args.Length == 1 && args[0] == "--list"))
+    else if (args.Length != 0 && !(args.Length == 1 && args[0] is "--list" or "--layout"))
     {
-        Console.Error.WriteLine("Usage: dotnet run [-- --list | -- --hwnd 0xHEX | -- --extract screenshot.png | -- --ocr image.png | -- --compare previous.png current.png | -- --watch [--frames N]]");
+        Console.Error.WriteLine("Usage: dotnet run [-- --list | -- --layout | -- --uia-geometry | -- --hwnd 0xHEX | -- --extract screenshot.png | -- --ocr image.png | -- --compare previous.png current.png | -- --watch [--frames N]]");
         return 2;
     }
 
@@ -98,7 +112,8 @@ try
     Console.WriteLine($"CEF: {result.CefContentStatus}\nChat: {result.ChatContentStatus}");
     if (!result.Success || result.SavedPath is null) return 1;
     operation = "Region extraction";
-    var regions = ExtractRegions(result.SavedPath);
+    var regions = await ExtractRegions(result.SavedPath, selected);
+    if (args.Contains("--layout")) return 0;
     operation = "OCR";
     RunOcr(regions.Single(path => Path.GetFileName(path) == "chat_region.png"));
     return 0;
@@ -109,17 +124,15 @@ catch (Exception ex)
     return 1;
 }
 
-static IReadOnlyList<string> ExtractRegions(string screenshotPath)
+static async Task<IReadOnlyList<string>> ExtractRegions(string screenshotPath, QianniuWindow? window = null)
 {
-    var layout = new QianniuLayoutRatio();
     Console.WriteLine($"\nRegion source: {Path.GetFullPath(screenshotPath)}");
-    QianniuLayout resolved;
-    using (var image = new System.Drawing.Bitmap(screenshotPath)) resolved = layout.Resolve(image.Size);
-    Console.WriteLine($"Layout: normalized ratios resolved for {resolved.ScreenshotSize.Width}x{resolved.ScreenshotSize.Height}; source pixels are not resized.");
-    foreach (var (fileName, bounds) in resolved.GetRegions())
+    var resolved = await new QianniuLayoutResolver().ResolveAsync(screenshotPath, window);
+    QianniuLayoutResolver.SaveDiagnostics(resolved, screenshotPath, Console.WriteLine);
+    foreach (var (fileName, bounds) in resolved.ToPixelLayout().GetRegions())
         Console.WriteLine($"{fileName}: X={bounds.X}, Y={bounds.Y}, Width={bounds.Width}, Height={bounds.Height}");
     var paths = new QianniuRegionExtractor().Extract(screenshotPath,
-        Path.Combine(Environment.CurrentDirectory, "Output", "Regions"), layout);
+        Path.Combine(Environment.CurrentDirectory, "Output", "Regions"), resolved.ToPixelLayout());
     Console.WriteLine("Region Extraction Success");
     foreach (var path in paths) Console.WriteLine($"Saved: {path}");
     return paths;

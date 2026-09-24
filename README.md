@@ -1,12 +1,59 @@
-# qnocr-poc V0.5
+# qnocr-poc V0.6
 
-独立的千牛视觉采集实验：发现千牛窗口 → 捕获完整窗口 → 比例布局裁剪 → chat_region OCR / 变化监测。
+独立的千牛视觉采集实验：发现千牛窗口 → 捕获完整窗口 → 混合布局定位与裁剪 → chat_region OCR / 变化监测。
 使用 C# / .NET 8 / Windows；未接入或修改其他项目。
 
-V0.5 使用 `QianniuLayoutRatio` 的归一化坐标，不再要求截图为1638×1100。
-1638×949实测已通过截图、裁剪、OCR和有限帧监测。窗口尺寸改变时重建监测基线，
-跳过该帧OCR，下一帧继续检测，避免把尺寸变化当作新增内容。
-详见 [VALIDATION_V05.md](VALIDATION_V05.md)。
+## V0.6 布局解析与诊断
+
+新增 `Layout/QianniuLayoutResolver.cs` 和 `Models/ResolvedLayout.cs`。
+分别输出 BuyerList / Chat / Product / Input 的 Bounds、Source、Reason；
+每个区域按 **UIA → Visual → RatioFallback** 选择。结果用于默认流程、`--extract` 和 `--watch`。
+
+```powershell
+# 当前窗口：截图、解析布局、输出四个区域，不执行OCR
+dotnet run -- --layout
+
+# 仅查看当前接待中心的UIA几何诊断，不截图、不执行OCR
+dotnet run -- --uia-geometry
+
+# 现有图片没有可核验的实时HWND：视觉定位 → 比例回退
+dotnet run -- --extract Output/qianniu_20260924_225736.png
+```
+
+UIA实现限制在选定千牛HWND的树中，仅请求 `ControlType`、`BoundingRectangle` 和 `IsOffscreen`。
+只保留 Pane / Document / Window / Group 的可见有效边界，不读取 Name、Value、TextPattern、
+AutomationId或聊天文本，不请求控件模式、不聚焦、不点击。非布局控件（包括Text/Edit）的子树不继续遍历。
+屏幕物理坐标减去同一窗口的GetWindowRect原点，转换为截图坐标；探测期间窗口移动、大小或所有者变化时拒绝该次几何数据。
+UIA以几何相似性推测区域，不依靠聊天内容或语义标签；比例模型用于限定候选搜索范围。
+
+探测在独立MTA后台线程进行，最多512个已访问节点、10层、约1200ms遍历预算，
+调用方最多等待1800ms。原生调用卡住时不会强行终止线程；同一进程最多保留一个未完成探测，
+后续调用先回退，避免无限创建卡住的线程。预算截断时保留已取得的几何节点，诊断标记Complete=false。
+已取得的节点仍须通过坐标/相似度/歧义检查才能使用，不将有限遍历描述为完整UIA树。
+近似重复的CEF宿主矩形（边缘差不超过3px）去重，明显不同且得分接近的候选不强行选中。
+
+视觉定位不读取/识别文字：在比例先验附近寻找长垂直背景边界、标题分隔线、消息/输入分隔线和右侧底栏边界。
+仅针对当前浅色主题；缺乏长边界或布局关系不合理时回退。右侧底栏缺失不会取消已可靠定位的聊天区，
+该区域单独尝试UIA或比例回退。最终校验区域在图内、相互位置一致；冲突时降级并记录原因。
+
+布局日志输出至Console及 `Output/Layout/layout_<时间>_<唯一编号>.json`，
+包含截图路径/尺寸、每个区域来源与坐标、UIA几何节点及完整性状态、视觉边界覆盖率、回退原因、总耗时。
+监测中的完整截图是临时文件，诊断所引用的该源图会在裁剪后删除；离线提取及默认单次截图仍保留原图。
+`--uia-geometry` 写 `Output/Layout/uia_geometry.json`，即使UIA不可用也正常输出诊断状态。
+
+实测示例（1638×949客服页）：
+
+```text
+[Layout] BuyerList: Visual Bounds={X=80,Y=120,Width=300,Height=829}
+[Layout] Chat: Visual Bounds={X=380,Y=181,Width=648,Height=447}
+[Layout] Product: UIA Bounds={X=1035,Y=120,Width=600,Height=827}
+[Layout] Input: Visual Bounds={X=380,Y=628,Width=648,Height=321}
+```
+
+此样本聊天图中的标题栏残留已消除；不是对所有千牛版本、皮肤、DPI、面板宽度和遮挡状态的保证。
+完整报告见 [VALIDATION_V06.md](VALIDATION_V06.md)。
+实现依据：[Microsoft UIA客户端概述](https://learn.microsoft.com/en-us/windows/win32/winauto/uiauto-clientsoverview)、
+[Microsoft UIA线程说明](https://learn.microsoft.com/uk-ua/windows/win32/winauto/uiauto-threading)。
 
 ## V0.4 变化检测模式
 
@@ -24,11 +71,11 @@ dotnet run -- --watch --frames 3
 dotnet run -- --compare previous_chat.png current_chat.png
 ```
 
-监测绑定启动时找到的可见接待中心 HWND，每帧按当前完整截图尺寸解析比例布局。
+监测绑定启动时找到的可见接待中心 HWND，每帧解析UIA/视觉/比例混合布局。
 每次处理完成后等待 1000ms 再取下一帧，不并行运行 OCR，不承诺固定每秒帧数。
 首帧只建基线，不识别历史；随后比较相邻成功帧，每帧处理后更新上一帧。
 窗口关闭、最小化、捕获失败、无效布局或 OCR 失败时停止并报错，不自动切换到其他窗口。
-窗口尺寸变化时重新计算区域并重建基线；即使新旧聊天裁剪尺寸恰好相同，也不比较缩放前后的画面。
+窗口尺寸或解析出的聊天矩形位置/尺寸变化时重建基线；即使聊天裁剪图尺寸不变，也不比较不同位置的区域。
 重建基线的那一帧不执行OCR，因此同帧到达的消息也不会被当作变化输出。
 Ctrl+C 在当前不可取消的捕获/OCR 操作结束后停止；`--frames N` 按成功捕获帧数计数，N 必须大于 0。
 
@@ -48,7 +95,7 @@ OCR 文本框坐标相对裁剪图；加上 change.json 中 OcrBoundsOriginInCha
 JSON 状态区分 PendingOcr / OcrCompleted / OcrFailed；OCR TXT/JSON 仍保存到 `Output/OCR`，路径打印在 Console。
 无变化不保存事件图、不调用 OCR；监测只循环覆盖两张临时聊天帧，成功裁剪后删除临时完整窗口截图。
 变化事件保留用于验收，长期运行时会占用磁盘；本版没有事件保留期限或后台服务。
-每个监测会话还保存 summary.json，记录帧数、尺寸变化导致的 BaselineResets、变化次数、OCR 调用次数及退出状态。
+每个监测会话还保存 summary.json，记录帧数、尺寸/定位变化导致的 BaselineResets、变化次数、OCR 调用次数及退出状态。
 
 **像素变化不等于新消息。** 滚动、切换会话、头像/表情动画、已读状态都会触发；
 同一横带的未变文字可能再次进入 OCR，多处分散变化会被一个包围框合并。
@@ -141,11 +188,12 @@ dotnet run -- --ocr Output/OCR/Fixtures/mixed_characters_28px.png
 技术来源：[PaddleSharp OCR](https://github.com/sdcb/PaddleSharp/blob/master/docs/ocr.md)、
 [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR)。
 
-## 比例区域布局
+## 比例回退布局
 
 `Models/QianniuLayoutRatio.cs` 定义 BuyerList / Chat / Product / Input 的 Left、Top、Width、Height 比例属性。
 所有配置均在0..1范围内，生产布局不再包含固定像素矩形或硬编码截图尺寸。
-`Resolve(Size)` 返回 `QianniuLayout`，后者仅承载当前截图解析出的像素矩形，没有默认固定坐标。
+比例模型的 `Resolve(Size)` 返回 `QianniuLayout`，后者承载像素矩形，没有默认固定坐标。
+V0.6优先采用混合解析器的结果；比例配置继续作为搜索先验和最终Fallback，保留旧接口用于显式比例提取及回归检查。
 `Capture/QianniuRegionExtractor.cs` 按解析结果裁剪原始像素，不拉伸或重采样原图。
 
 默认比例由V0.2参考布局归一化得到；下表仅展示六位小数，源码保留更多有效位。
@@ -163,10 +211,9 @@ top/bottom同理；.5向远离零方向取整，宽高由边界相减，避免�
 只对浮点舍入引起的1e-12以内归一化边界误差作容差；非法、负值、NaN/Infinity、越界或取整后为空的区域会报错。
 
 目标区域仍是买家列表、消息历史、右侧商品/订单面板和输入区。
-**比例适配不等于界面元素的精确定位**：千牛标题栏、工具栏等并非随窗口等比缩放。
-1638×949实测可见消息与商品内容，但聊天图顶部夹入部分标题栏残留，输入区上缘多出少量消息区空白；
-商品图边缘也含少量相邻栏。自适应解决了尺寸硬限制，尚不能保证所有尺寸/DPI/面板拖动后的语义边界准确。
-不进行AI/视觉锚点识别、不自动调整窗口；实际比例可在模型属性中调整。
+**比例回退不保证精确定位**：千牛控件并非等比缩放。V0.5曾出现标题栏残留等问题，
+当V0.6退回比例布局时这些问题仍可能出现，Source=RatioFallback必须作为降级结果看待。
+当前不接入AI接口、不自动调整窗口；实际回退比例可在模型属性中调整。
 
 四张 PNG 写入当前目录的 `Output/Regions/`，再次运行会替换同名区域图，原图不变。
 提取前检查 PNG 格式、有效尺寸、全部比例/区域边界以及源文件/输出路径冲突。
@@ -220,5 +267,5 @@ dotnet run 2>&1 | Tee-Object -FilePath Output/run.log
 截图和原始日志保留在本地 Output，不进入 Git。
 历史实测：V0.1 [VALIDATION.md](VALIDATION.md)，V0.2 [VALIDATION_V02.md](VALIDATION_V02.md)。
 
-范围止于 V0.5 比例布局适配；不包含 AI 接口、Knowledge V2、SalesAgent、
-自动回复、自动点击/发送、DLL 注入、进程内存读取、UI Automation 或 qnbot 集成。
+范围止于 V0.6 布局定位增强。UIA仅用于几何定位；不读取UIA聊天文本。
+不包含AI接口、Knowledge V2、SalesAgent、自动回复、自动点击/发送、DLL注入、进程内存读取或qnbot集成。
