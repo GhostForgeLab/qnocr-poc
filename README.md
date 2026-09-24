@@ -1,6 +1,6 @@
-# qnocr-poc V0.2
+# qnocr-poc V0.3
 
-独立的千牛视觉采集实验：发现千牛窗口 → 捕获完整窗口 → 固定坐标裁剪 → 保存 PNG。
+独立的千牛视觉采集实验：发现千牛窗口 → 捕获完整窗口 → 固定坐标裁剪 → chat_region 单次 OCR。
 使用 C# / .NET 8 / Windows；未接入或修改其他项目。
 
 ## 运行
@@ -25,11 +25,58 @@ dotnet run
 必须在千牛所在用户的交互桌面运行；受限沙箱或服务会话可能无法枚举窗口。
 本次沙箱内 EnumWindows 失败，在允许访问用户桌面的运行环境中成功。
 
-V0.2 默认 `dotnet run` 在捕获成功后继续裁剪。也可以直接裁剪已有完整截图，无需千牛运行：
+V0.3 默认 `dotnet run` 在捕获、裁剪成功后只对 `chat_region.png` 执行一次 OCR。
+直接识别图片，无需千牛运行，也不要求固定尺寸：
+
+```powershell
+dotnet run -- --ocr Output/Regions/chat_region.png
+```
+
+首次运行需联网还原 NuGet 依赖；依赖及本地模型缓存到项目 `.tools/nuget`，
+不使用 Python，不上传图片，也不调用外部 OCR/AI 接口。提交的 `packages.lock.json` 锁定依赖，
+可用 `dotnet restore --locked-mode` 重建。平台为 Windows x64；原生运行库需要 Visual C++ x64 运行时。
+
+也可以仅裁剪已有完整截图（该模式不执行 OCR）：
 
 ```powershell
 dotnet run -- --extract Output/qianniu_20260924_221542.png
 ```
+
+## PaddleOCR 单图识别
+
+`OCR/PaddleOcrService.cs` 使用 PaddleSharp（社区 C# 封装）的本地 PP-OCRv5 中文模型，
+调用 Paddle Inference CPU MKL。`Models/OcrResult.cs` 返回文本行、置信度、边界框及性能数据。
+固定依赖：Sdcb.PaddleOCR / Models.Local 3.3.1，PaddleInference 3.3.1，
+Windows MKL runtime 3.3.1.70，OpenCvSharp 托管/原生包 4.11.0.20250507。
+
+- 每次命令新建 OCR 引擎，处理一张图后释放；不循环、不做变化检测或消息提取。
+- 截图中的水平文字关闭旋转/180°分类；其他方向和复杂文档布局不在本版验收范围。
+- 输出按检测框中心 Y、X 排序，不推断买家/客服角色，不补全或修正模型输出。
+- 舍弃模型返回的空文本框；无效分数转为 null，平均置信度仅计算有效分数。
+- 空白图正常返回 `No text detected`、Confidence `N/A`，仍表示推理成功；不是识别出了文本。
+- Confidence 是模型分数，不是准确率；昵称、头像/表情附近、标点和空格仍可能识别错误。
+- Console 输出结果，另存 `Output/OCR/<图片名>_<时间>.txt` 与 `.json`；JSON 保存逐行分数、
+  边界框、丢弃空框数和原始毫秒/字节指标。
+- 时间区分模型初始化、检测+识别推理、总耗时（读图/解码+初始化+推理+结果整理），
+  不含构建、模型下载、Console/结果文件写入和资源释放。
+- 内存为当前进程的 OCR 前/后工作集和进程生命周期峰值（MiB），包含 .NET/原生库；
+  不是托管堆大小，也不是 OCR 独占内存。测量“后”在引擎释放前。
+
+可复现的中英数字/型号/容量/符号测试图：
+
+```powershell
+./Validation/Create-OcrFixtures.ps1
+dotnet run -- --ocr Output/OCR/Fixtures/mixed_characters_18px.png
+dotnet run -- --ocr Output/OCR/Fixtures/mixed_characters_28px.png
+./Validation/Measure-OcrAccuracy.ps1 -OcrJson Output/OCR/实际结果.json -GroundTruthJson Output/OCR/Fixtures/mixed_characters_18px.ground-truth.json
+```
+
+夹具使用 Microsoft YaHei 字体，18px/28px；脚本同时保存准确的参考文本。
+字符错误率使用 Levenshtein 编辑距离，分别报告保留空格和仅去除空白的口径，
+保留大小写及标点差异。实测、错误样例与性能详见 [VALIDATION_V03.md](VALIDATION_V03.md)。
+
+技术来源：[PaddleSharp OCR](https://github.com/sdcb/PaddleSharp/blob/master/docs/ocr.md)、
+[PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR)。
 
 ## 固定区域布局
 
@@ -91,7 +138,7 @@ PrintWindow 是同步调用，依赖目标应用绘制；API 成功不等于 CEF
 
 截图：当前工作目录的 `Output/qianniu_yyyyMMdd_HHmmss.png`。
 同一秒文件名冲突时增加毫秒和唯一后缀，避免覆盖已有样本。
-退出码：0 捕获和裁剪成功（或仅提取/列举成功），1 捕获或裁剪失败，2 参数错误。
+退出码：0 完整流程成功（或仅 OCR/提取/列举成功），1 捕获/裁剪/OCR 失败，2 参数错误。
 
 保留运行日志：
 
@@ -102,7 +149,7 @@ dotnet run 2>&1 | Tee-Object -FilePath Output/run.log
 逐张人工确认：聊天区域边界、买家消息文字、商品卡片、CEF 页面内容、黑屏/空白。
 当当前页面无聊天/商品卡片时，必须记为未验证。
 截图和原始日志保留在本地 Output，不进入 Git。
-V0.1 实测记录见 [VALIDATION.md](VALIDATION.md)，V0.2 见 [VALIDATION_V02.md](VALIDATION_V02.md)。
+历史实测：V0.1 [VALIDATION.md](VALIDATION.md)，V0.2 [VALIDATION_V02.md](VALIDATION_V02.md)。
 
-范围止于 V0.2 固定区域裁剪；没有 OCR、AI、视觉检测、知识库、自动回复、自动发送、DLL 注入、
-进程内存读取、UI Automation 或 qnbot 集成。
+范围止于 V0.3 单图 OCR；不包含实时循环/变化检测、AI 接口、Knowledge V2、SalesAgent、
+自动回复、自动点击/发送、DLL 注入、进程内存读取、UI Automation 或 qnbot 集成。
