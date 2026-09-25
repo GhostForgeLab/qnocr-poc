@@ -87,8 +87,10 @@ namespace CompatibilityHost
             var rules = Call("Bot.ChromeNs.BotFeatureStore", "GetAutoReplyRules");
             if ((bool)rules.GetType().GetProperty("EnableHandoffNotification").GetValue(rules, null)) throw new InvalidOperationException("Notifications must remain OFF.");
             var method = bot.GetType("Bot.ChromeNs.StreamingBuyerAnswerService", true).GetMethod("GetAnswerAsync", BindingFlags.Public | BindingFlags.Static);
+            var clock = System.Diagnostics.Stopwatch.StartNew();
             var task = (Task<string>)method.Invoke(null, new object[] { seller, buyer, question, token, new Action<string>(_ => { }), null });
-            return await task;
+            try { return await task; }
+            finally { GenerationMilliseconds = clock.ElapsedMilliseconds; }
         }
         public long AiCalls { get { var stats = Call("Bot.ChromeNs.BotRuntimeStats", "GetSnapshot"); return Convert.ToInt64(stats.GetType().GetProperty("TotalAiCalls").GetValue(stats, null)); } }
         public string LastAiError

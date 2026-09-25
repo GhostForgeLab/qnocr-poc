@@ -118,6 +118,7 @@ namespace CompatibilityHost
                     System.Threading.Interlocked.Increment(ref callbacks);
                     try
                     {
+                        await ai.ObserveAsync(identity.SellerNick, identity.BuyerNick, lease.Burst.CombinedQuestion, envelope.ProductId, deadline.Token);
                         var answer = await ai.GenerateAsync(identity.SellerNick, identity.BuyerNick, lease.Burst.CombinedQuestion, deadline.Token);
                         completion.TrySetResult(answer);
                     }
@@ -139,6 +140,8 @@ namespace CompatibilityHost
                     AiEnabled = true, SendEnabled = false, AiInvoked = calls > 0, AiCalls = calls, LastAiError = ai.LastAiError,
                     ReplySuggestion = failure == null ? reply : null, ConvertedMessages = failure == null ? items.Count : 0,
                     Input = envelope.Messages, ProductId = envelope.ProductId, ProductBinding = envelope.ProductBinding,
+                    SalesAgent = ai.SalesObservation, KnowledgeV2 = ai.KnowledgeObservation, GenerationTrace = ai.GenerationTrace(),
+                    AiDurationMilliseconds = ai.GenerationMilliseconds,
                     ProductContextUsage = "Logged OCR sidecar; existing generation service has no product-ID prompt parameter. No fabricated product URL or prompt rewrite.",
                     CoordinatorCreated = true, CoordinatorCallbacks = callbacks, ForbiddenBusinessCalls = Guard.ForbiddenCalls,
                     SendEntryInvoked = false, SentMessages = 0, RuntimeInitializers = Guard.SuppressedInitializers,

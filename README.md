@@ -49,6 +49,9 @@ ProductId保留在回执上下文：现有生成入口没有商品ID提示参数
 匿名合成样例也通过原装生成服务获得中文ReplySuggestion：AiCalls=1、SendEnabled=false、SentMessages=0。
 Provider来源、备份和回滚步骤见 [VALIDATION_V13_OPENROUTER.md](VALIDATION_V13_OPENROUTER.md)。
 真实10条业务验收仍未执行；先前端点失败记录保留在 [VALIDATION_V13.md](VALIDATION_V13.md)。
+续验增加了原SalesAgent和Knowledge V2的Shadow观察日志、实际生成路由追踪和耗时。
+本轮251帧真实捕获未出现新问题，10条验收仍待买家端发送，见 [VALIDATION_V13_ACCEPTANCE.md](VALIDATION_V13_ACCEPTANCE.md)。
+观察开关仅作用于复制的测试作用域；未修改qnbot核心，也未把观察结果注入Prompt。
 
 ## V1.2 新消息 Shadow
 
