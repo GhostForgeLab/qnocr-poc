@@ -1,7 +1,74 @@
-# qnocr-poc V0.8
+# qnocr-poc V0.9
 
-独立的千牛视觉采集实验：窗口捕获 → 混合布局裁剪 → 聊天/商品OCR → 商品上下文 → 买家消息结构化。
+独立的千牛视觉采集实验：窗口捕获 → 布局裁剪 → OCR → BuyerMessage → 统一MessageEnvelope。
 使用 C# / .NET 8 / Windows；未接入或修改其他项目。
+
+## V0.9 Message Adapter
+
+新增 `Adapter/IMessageSource.cs`、`Adapter/OcrMessageSource.cs` 和 `Models/MessageEnvelope.cs`。
+统一接口只依赖消息契约和.NET基础类型，不向消费方暴露OCR、截图或UIA对象：
+
+```csharp
+public interface IMessageSource
+{
+    string Source { get; }
+    IAsyncEnumerable<MessageEnvelope> ReadAsync(CancellationToken cancellationToken = default);
+}
+
+IMessageSource source = new OcrMessageSource(
+    cancellationToken => Task.FromResult(confirmedBatch), sellerId: "", buyerId: "");
+await foreach (var envelope in source.ReadAsync(cancellationToken))
+{
+    string json = JsonSerializer.Serialize(envelope); // 本阶段仅本地验证/保存
+}
+```
+
+OcrMessageSource每次枚举调用一次批次提供方，只转换`BuyerMessageBatch.Messages`，不转换ReviewItems。
+它不启动OCR或持续采集；默认流程与`--messages`在结构化后自动调用Adapter。
+已保存的V0.8结果可以离线转换，无需打开千牛或再次运行OCR：
+
+```powershell
+dotnet run -- --adapt Output/Messages/buyer_messages_20260925_091445_498.json
+dotnet run -- --adapt 消息批次.json --seller-id seller-test --buyer-id buyer-test
+```
+
+第二条的身份仅为示例。真实ID只能由调用方提供，缺失时为空，不从昵称、窗口标题、OCR或历史批次猜测。
+空ID表示未知，不是可用于合并会话的匿名ID。
+
+契约v1（与应用版本V0.9不同）：
+
+```json
+{
+  "Source": "Qianniu.OCR",
+  "SellerId": "",
+  "BuyerId": "",
+  "ProductId": "1051087533910",
+  "Messages": [
+    { "Role": "buyer", "Text": "这个可以刻字吗", "Timestamp": "2026-09-24T19:51:45" }
+  ],
+  "SchemaVersion": 1,
+  "ProductBinding": "ExplicitCallerContextNotVerifiedMessageAssociation"
+}
+```
+
+保留Timestamp以免丢失V0.8显示时间，增加SchemaVersion和ProductBinding说明版本及商品上下文来源。
+Unspecified时间不附加Z或推断时区；ProductId只代表上下文，不证明历史消息的商品归属。
+供评审使用的JSON Schema在 `Adapter/message-envelope.schema.json`。
+
+- 同一连续商品ID放入一个Envelope，商品ID改变就分段，包括空ID；A→未知→B→A输出四个事件，保持顺序。
+- 文本、空格、换行、时间、重复消息均保留，不做纠错、重新排序、去重或新消息断言。
+- 整批校验并复制快照后才输出；非法角色/来源、空正文、默认时间、非法OCR商品ID使整批失败。
+  输入应来自可信qnocr批次；字段校验不是来源认证，也不会重新核验图像证据。
+- 取消在提供方调用前/后及每个事件输出前检查；提供方须配合CancellationToken。
+  已输出事件不会因取消而撤回，不承诺原子投递。
+- 每次重新枚举会重新调用提供方，没有持久游标、重试、去重、ACK或消息队列。
+- 空批次不产生空事件；ReviewItems、图像路径、OCR原始结果和定位证据不进入统一消息体。
+
+每个Envelope单独写入 `Output/Adapter/message_envelope_<批次编号>_<序号>.json`，
+先写同目录临时文件再改名；这些是验收产物，不是已部署的队列或qnbot收件箱。
+契约代码仍在POC程序集内，未来可独立抽出。未检查、引用、调用或修改qnbot项目，
+**没有证明与其现有接口可直接兼容**。本阶段仅验证IMessageSource与独立JSON消费DTO。
+详见 [VALIDATION_V09.md](VALIDATION_V09.md)。
 
 ## V0.8 买家消息结构化
 
@@ -359,8 +426,8 @@ PrintWindow 是同步调用，依赖目标应用绘制；API 成功不等于 CEF
 
 截图：当前工作目录的 `Output/qianniu_yyyyMMdd_HHmmss.png`。
 同一秒文件名冲突时增加毫秒和唯一后缀，避免覆盖已有样本。
-退出码：0 成功（默认及消息模式表示至少一条确认消息；商品模式表示Matched；其他独立命令保持原成功含义）；
-1 捕获/裁剪/OCR/目录或文件读取失败；2 参数错误；3 消息模式无可确认消息，或商品模式未可靠匹配。
+退出码：0 成功（默认及消息模式表示至少一条确认消息；适配模式表示至少一个Envelope；商品模式表示Matched；其他独立命令保持原成功含义）；
+1 捕获/裁剪/OCR/目录、文件或Adapter输入失败；2 参数错误；3 无可确认消息/无Envelope，或商品模式未可靠匹配。
 默认消息流程中商品ID未知是允许的，不使已确认消息失败；具体商品状态仍单独保存。
 
 保留运行日志：
@@ -374,5 +441,5 @@ dotnet run 2>&1 | Tee-Object -FilePath Output/run.log
 截图和原始日志保留在本地 Output，不进入 Git。
 历史实测：V0.1 [VALIDATION.md](VALIDATION.md)，V0.2 [VALIDATION_V02.md](VALIDATION_V02.md)。
 
-范围止于 V0.8 买家消息结构化。UIA仍仅用于几何定位，不读取消息或商品ID文本。
+范围止于 V0.9 Adapter接口及本地契约验证。UIA仍仅用于几何定位，不读取消息或商品ID文本。
 不包含AI接口、Knowledge V2、SalesAgent、自动回复、自动点击/发送、DLL注入、进程内存读取或qnbot集成。

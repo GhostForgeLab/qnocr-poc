@@ -9,15 +9,40 @@ using QnocrPoc.Detection;
 using QnocrPoc.Layout;
 using QnocrPoc.Product;
 using QnocrPoc.Messages;
+using QnocrPoc.Adapter;
 
 Console.OutputEncoding = Encoding.UTF8;
-Console.WriteLine("[QN OCR POC V0.8]");
+Console.WriteLine("[QN OCR POC V0.9]");
 Console.WriteLine($"Time: {DateTimeOffset.Now:O}");
 Console.WriteLine($"Runtime: {System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription}");
 var operation = "Capture";
 
 try
 {
+    if (args.Length > 0 && args[0] == "--adapt")
+    {
+        var ids = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (args.Length < 2 || args.Length % 2 != 0)
+        {
+            Console.Error.WriteLine("Usage: dotnet run -- --adapt buyer_messages.json [--seller-id ID] [--buyer-id ID]");
+            return 2;
+        }
+        for (var i = 2; i < args.Length; i += 2)
+        {
+            if (args[i] is not ("--seller-id" or "--buyer-id") || !ids.TryAdd(args[i], args[i + 1]) ||
+                args[i + 1].Length > 0 && string.IsNullOrWhiteSpace(args[i + 1]))
+            {
+                Console.Error.WriteLine("Invalid or duplicate identity option. Use --seller-id / --buyer-id, or omit unknown IDs.");
+                return 2;
+            }
+        }
+        operation = "Message adapter";
+        var batch = JsonSerializer.Deserialize<BuyerMessageBatch>(File.ReadAllText(args[1]))
+            ?? throw new InvalidDataException("Message batch JSON is null.");
+        var count = await SaveEnvelopes(batch, ids.GetValueOrDefault("--seller-id", ""), ids.GetValueOrDefault("--buyer-id", ""));
+        return count > 0 ? 0 : 3;
+    }
+
     if (args.Length > 0 && args[0] == "--messages")
     {
         if (!(args.Length == 2 || args.Length == 4 && args[2] == "--product-id" && ProductIdExtractor.IsValidProductId(args[3])))
@@ -28,6 +53,8 @@ try
         operation = "Buyer message structuring";
         var ocr = RunOcrAndSave(args[1]);
         var batch = SaveMessages(ocr, args.Length == 4 ? args[3] : "", "ExplicitCallerContextNotVerifiedMessageAssociation");
+        operation = "Message adapter";
+        await SaveEnvelopes(batch);
         return batch.Messages.Count > 0 ? 0 : 3;
     }
 
@@ -102,7 +129,7 @@ try
         requestedHandle = (nint)handle;
     else if (args.Length != 0 && !(args.Length == 1 && args[0] is "--list" or "--layout"))
     {
-        Console.Error.WriteLine("Usage: dotnet run [-- --list | -- --layout | -- --uia-geometry | -- --hwnd 0xHEX | -- --extract screenshot.png | -- --ocr image.png | -- --messages chat_region.png [--product-id digits] | -- --product image.png [--profiles catalog.json] | -- --compare previous.png current.png | -- --watch [--frames N]]");
+        Console.Error.WriteLine("Usage: dotnet run [-- --adapt buyer_messages.json [--seller-id ID] [--buyer-id ID] | -- --list | -- --layout | -- --uia-geometry | -- --hwnd 0xHEX | -- --extract screenshot.png | -- --ocr image.png | -- --messages chat_region.png [--product-id digits] | -- --product image.png [--profiles catalog.json] | -- --compare previous.png current.png | -- --watch [--frames N]]");
         return 2;
     }
 
@@ -147,6 +174,8 @@ try
     var productContext = RunProductAndSave(regions.Single(path => Path.GetFileName(path) == "product_region.png"));
     operation = "Buyer message structuring";
     var messages = SaveMessages(chatOcr, productContext.ProductId ?? "", "SameCaptureVisibleProductNotVerifiedMessageAssociation");
+    operation = "Message adapter";
+    await SaveEnvelopes(messages);
     // Product context is optional for a valid buyer message; unresolved IDs remain empty.
     return messages.Messages.Count > 0 ? 0 : 3;
 }
@@ -232,4 +261,23 @@ static BuyerMessageBatch SaveMessages(OcrResult ocr, string productId, string pr
     File.WriteAllText(path, JsonSerializer.Serialize(batch, options), new UTF8Encoding(false));
     Console.WriteLine($"\nBuyer Messages:\n{JsonSerializer.Serialize(batch.Messages, options)}\nReview items: {batch.ReviewItems.Count}\nMessage result saved: {path}");
     return batch;
+}
+
+static async Task<int> SaveEnvelopes(BuyerMessageBatch batch, string sellerId = "", string buyerId = "")
+{
+    IMessageSource source = new OcrMessageSource(_ => Task.FromResult(batch), sellerId, buyerId);
+    var count = 0;
+    var runId = $"{DateTime.Now:yyyyMMdd_HHmmss_fff}_{Guid.NewGuid():N}";
+    await foreach (var envelope in source.ReadAsync())
+    {
+        var json = JsonSerializer.Serialize(envelope, new JsonSerializerOptions { WriteIndented = true, Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
+        Directory.CreateDirectory("Output/Adapter");
+        var path = Path.GetFullPath(Path.Combine("Output", "Adapter", $"message_envelope_{runId}_{++count:D3}.json"));
+        var temporaryPath = path + ".tmp";
+        File.WriteAllText(temporaryPath, json, new UTF8Encoding(false));
+        File.Move(temporaryPath, path);
+        Console.WriteLine($"\nMessage Envelope:\n{json}\nEnvelope saved: {path}");
+    }
+    Console.WriteLine($"Adapter emitted {count} envelope(s). No external consumer invoked.");
+    return count;
 }

@@ -105,4 +105,5 @@ await LayoutChecks.RunAsync(Check);
 await ResolverChecks.RunAsync(Check);
 ProductChecks.Run(Check);
 MessageChecks.Run(Check);
-Console.WriteLine($"Passed {passed} checks (V0.4 through V0.8). Fixtures: {root}");
+await AdapterChecks.RunAsync(Check);
+Console.WriteLine($"Passed {passed} checks (V0.4 through V0.9). Fixtures: {root}");

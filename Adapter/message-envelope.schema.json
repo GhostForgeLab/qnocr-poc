@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "qnocr-poc MessageEnvelope v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["SchemaVersion", "Source", "SellerId", "BuyerId", "ProductId", "ProductBinding", "Messages"],
+  "properties": {
+    "SchemaVersion": { "const": 1 },
+    "Source": { "type": "string", "minLength": 1 },
+    "SellerId": { "type": "string" },
+    "BuyerId": { "type": "string" },
+    "ProductId": { "type": "string" },
+    "ProductBinding": { "type": "string", "description": "Context provenance only. ProductId is not proof that a historical message concerns that product." },
+    "Messages": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["Role", "Text", "Timestamp"],
+        "properties": {
+          "Role": { "type": "string", "minLength": 1 },
+          "Text": { "type": "string", "minLength": 1 },
+          "Timestamp": { "type": "string", "description": "System.Text.Json ISO-8601 DateTime. Unspecified time has no offset; do not silently treat it as UTC." }
+        }
+      }
+    }
+  }
+}
