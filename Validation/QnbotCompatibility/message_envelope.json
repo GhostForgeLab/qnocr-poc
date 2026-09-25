@@ -1,0 +1,12 @@
+{
+  "SchemaVersion": 1,
+  "Source": "Qianniu.OCR",
+  "SellerId": "seller-test",
+  "BuyerId": "buyer-test",
+  "ProductId": "1000000000001",
+  "ProductBinding": "SyntheticOfflineFixtureNotVerifiedMessageAssociation",
+  "Messages": [
+    { "Role": "buyer", "Text": "这个可以刻字吗？", "Timestamp": "2026-01-02T10:00:00" },
+    { "Role": "buyer", "Text": "还想了解发货时间。", "Timestamp": "2026-01-02T10:00:01" }
+  ]
+}

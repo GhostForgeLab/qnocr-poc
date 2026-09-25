@@ -1,0 +1,9 @@
+{
+  "SellerId": "seller-test",
+  "SellerNick": "offline_fixture_seller",
+  "BuyerId": "buyer-test",
+  "BuyerNick": "offline_fixture_buyer",
+  "SellerTargetId": "offline_seller_target",
+  "BuyerTargetId": "offline_buyer_target",
+  "IsTestMapping": true
+}

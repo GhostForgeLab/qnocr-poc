@@ -1,0 +1,30 @@
+{
+  "QnbotCommit": "4802807f26a6abf4cfb4457d5b158b2f51f4ff18",
+  "Sources": [
+    {
+      "Path": "src/Bot/ChatRecord/ChatResponse.cs",
+      "Sha256": "41755DB0F8075F297A749F5FF37B8B57DAE761876DBC84F17FB456E5F01A63A4"
+    },
+    {
+      "Path": "src/Bot/ChromeNs/BuyerMessageBurstCoordinator.cs",
+      "Sha256": "D6580897354CFFE76ABA5783DFB776BFB4D2BE7A4872A5627AF5DEBA57055BE6"
+    },
+    {
+      "Path": "src/Bot/ChromeNs/BuyerSessionAgent.cs",
+      "Sha256": "2C153660CEC37F2F5EC7368D6B9484B104592B24A85225C0E3835E7935DCC5A9"
+    },
+    {
+      "Path": "src/Bot/ChromeNs/IncomingMessageSafety.cs",
+      "Sha256": "E48C7E36E7996018CB5269C04AA3DB186040AF93362732FFDE10A3C5FCE6BA2B"
+    },
+    {
+      "Path": "src/Bot/ChromeNs/VisionMessageDecision.cs",
+      "Sha256": "9C7ADB9C9A08E2484A2177C51F30E9945029C94CD714FB0466236540D9431184"
+    },
+    {
+      "Path": "src/BotLib/Extensions/RegexEx.cs",
+      "Sha256": "B73D93B8F0FF4AA59873EBA15FCB5E148FD770CD560C0D64EE71F6F9EAF562BE"
+    }
+  ],
+  "UnmodifiedSourceCopies": true
+}

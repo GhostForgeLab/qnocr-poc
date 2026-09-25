@@ -1,7 +1,44 @@
-# qnocr-poc V0.9
+# qnocr-poc V1.0
 
 独立的千牛视觉采集实验：窗口捕获 → 布局裁剪 → OCR → BuyerMessage → 统一MessageEnvelope。
-使用 C# / .NET 8 / Windows；未接入或修改其他项目。
+主程序使用 C# / .NET 8 / Windows；V1.0增加独立.NET Framework 4.8离线兼容性宿主，不修改qnbot。
+
+## V1.0 qnbot兼容性验证
+
+接口分析见 [docs/QNBOT_MESSAGE_CONTRACT_ANALYSIS.md](docs/QNBOT_MESSAGE_CONTRACT_ANALYSIS.md)。
+实际qnbot类型是 `QNChatMessage` 与内部的 `BuyerMessageBurstItem`，并非公开的BuyerMessage类。
+`Integration/QnocrMessageAdapter.cs` 将统一Envelope转换成这些真实类型；
+`Integration/MessageEnvelopeWire.cs` 是v1 JSON的C#7.3解码DTO，解决.NET8与.NET4.8之间的程序集边界。
+Integration源码仅编入独立验证宿主，不注入主POC或真实Bot进程。
+
+```powershell
+# 需Windows上的.NET Framework4.8运行时及引用程序集/Developer Pack
+./Validation/QnbotCompatibility/Run-Compatibility.ps1 -QnbotRoot D:/CodexWork/qnagent/qnbot
+
+# 可替换为已有V0.9 Envelope；身份必须与显式映射相符
+./Validation/QnbotCompatibility/Run-Compatibility.ps1 -QnbotRoot D:/CodexWork/qnagent/qnbot -EnvelopePath 输入.json -IdentityMapping 映射.json
+```
+
+默认输入 `Validation/QnbotCompatibility/message_envelope.json` 与身份映射均为匿名合成样例。
+准备脚本校验qnbot干净工作区、固定commit及源码SHA256，复制6份未修改源码到本项目`.tools`并原样编译。
+遇到不同qnbot版本会停止，需重新分析后显式更新基线清单。
+宿主执行真实协调器/会话状态机，外围UI/配置/业务依赖替换为受控测试实现，潜在AI/发送调用会抛错并计数。
+不得把 `OfflineRuntime.cs` 放入真实qnbot，它只用于隔离测试。
+
+已验证2条消息经Enqueue进入记录回调，generation为1、2，重复重放未再次派发，禁止业务调用为0。
+输出位于脚本打印的 `Output/Integration/run_*`：`qnbot-messages.json` 是原生对象，
+`converted-messages.json` 含BurstItem和上下文旁路信息，`compatibility-result.json` 是验收摘要。
+
+必须明确的限制：
+
+- SellerId/BuyerId不能猜成昵称或平台targetId；要求显式映射。原始空身份Envelope会被拒绝。
+- 无偏移的源时间需显式显示时区。本宿主测试时区为China Standard Time，不改旧消息时间来绕过历史过滤。
+- ProductId保留为旁路上下文，不伪造商品URL，不直接写入只读originalData.itemId，未贯通商品知识链。
+- 合成消息键只证明相同离线重放去重，不等于解决原生/OCR跨入口去重或新消息确认。
+- 输出固定为OfflineCompatibilityOnly，ShouldCallAi=false、VisionDecision=Skip。
+- 兼容宿主没有运行完整普通入口、SalesAgent、Knowledge V2、Prompt或Reply Chain，也未连接真实千牛。
+
+因此结论是**离线聚合器入口有条件兼容**，不是已经部署的Shadow或真实业务集成。
 
 ## V0.9 Message Adapter
 
@@ -66,8 +103,9 @@ Unspecified时间不附加Z或推断时区；ProductId只代表上下文，不�
 
 每个Envelope单独写入 `Output/Adapter/message_envelope_<批次编号>_<序号>.json`，
 先写同目录临时文件再改名；这些是验收产物，不是已部署的队列或qnbot收件箱。
-契约代码仍在POC程序集内，未来可独立抽出。未检查、引用、调用或修改qnbot项目，
-**没有证明与其现有接口可直接兼容**。本阶段仅验证IMessageSource与独立JSON消费DTO。
+契约代码仍在POC程序集内，未来可独立抽出。V0.9阶段仅验证IMessageSource与独立JSON消费DTO；
+V1.0补充了上述只读代码分析和独立进程兼容验证，仍未修改或调用运行中的qnbot，
+**没有证明可直接接通其完整生产入口**。
 详见 [VALIDATION_V09.md](VALIDATION_V09.md)。
 
 ## V0.8 买家消息结构化
@@ -441,5 +479,5 @@ dotnet run 2>&1 | Tee-Object -FilePath Output/run.log
 截图和原始日志保留在本地 Output，不进入 Git。
 历史实测：V0.1 [VALIDATION.md](VALIDATION.md)，V0.2 [VALIDATION_V02.md](VALIDATION_V02.md)。
 
-范围止于 V0.9 Adapter接口及本地契约验证。UIA仍仅用于几何定位，不读取消息或商品ID文本。
-不包含AI接口、Knowledge V2、SalesAgent、自动回复、自动点击/发送、DLL注入、进程内存读取或qnbot集成。
+范围止于 V1.0 qnbot离线兼容性PoC。UIA仍仅用于几何定位，不读取消息或商品ID文本。
+未修改qnbot核心业务，未启用真实Shadow、AI回复或发送，也未接入真实消息传输。

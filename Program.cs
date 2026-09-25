@@ -12,7 +12,7 @@ using QnocrPoc.Messages;
 using QnocrPoc.Adapter;
 
 Console.OutputEncoding = Encoding.UTF8;
-Console.WriteLine("[QN OCR POC V0.9]");
+Console.WriteLine("[QN OCR POC V1.0]");
 Console.WriteLine($"Time: {DateTimeOffset.Now:O}");
 Console.WriteLine($"Runtime: {System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription}");
 var operation = "Capture";

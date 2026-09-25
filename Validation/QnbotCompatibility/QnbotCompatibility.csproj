@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>7.3</LangVersion>
+    <PlatformTarget>x64</PlatformTarget>
+    <AutomaticallyUseReferenceAssemblyPackages>false</AutomaticallyUseReferenceAssemblyPackages>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <!-- Preserve, do not edit/suppress the upstream's existing non-awaited continuation warning. -->
+    <WarningsNotAsErrors>CS4014</WarningsNotAsErrors>
+    <QnbotSourceRoot>$(MSBuildThisFileDirectory)../../.tools/qnbot-compat-source</QnbotSourceRoot>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="System.Web.Extensions" />
+    <EmbeddedResource Include="$(QnbotSourceRoot)/source-manifest.json" LogicalName="QnbotSourceManifest.json" />
+    <Compile Include="../../Integration/**/*.cs" Link="Integration/%(Filename)%(Extension)" />
+    <Compile Include="$(QnbotSourceRoot)/src/Bot/ChatRecord/ChatResponse.cs" Link="Upstream/ChatResponse.cs" />
+    <Compile Include="$(QnbotSourceRoot)/src/Bot/ChromeNs/BuyerMessageBurstCoordinator.cs" Link="Upstream/BuyerMessageBurstCoordinator.cs" />
+    <Compile Include="$(QnbotSourceRoot)/src/Bot/ChromeNs/BuyerSessionAgent.cs" Link="Upstream/BuyerSessionAgent.cs" />
+    <Compile Include="$(QnbotSourceRoot)/src/Bot/ChromeNs/IncomingMessageSafety.cs" Link="Upstream/IncomingMessageSafety.cs" />
+    <Compile Include="$(QnbotSourceRoot)/src/Bot/ChromeNs/VisionMessageDecision.cs" Link="Upstream/VisionMessageDecision.cs" />
+    <Compile Include="$(QnbotSourceRoot)/src/BotLib/Extensions/RegexEx.cs" Link="Upstream/RegexEx.cs" />
+  </ItemGroup>
+  <Target Name="RequireSourceSnapshot" BeforeTargets="CoreCompile">
+    <Error Condition="!Exists('$(QnbotSourceRoot)/source-manifest.json')" Text="Run Prepare-QnbotSource.ps1 before building this isolated host." />
+  </Target>
+</Project>
