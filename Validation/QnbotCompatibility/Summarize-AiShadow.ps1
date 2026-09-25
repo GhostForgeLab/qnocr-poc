@@ -14,6 +14,11 @@ $receipts = @(Get-ChildItem -LiteralPath $session -Recurse -Filter shadow-adapte
     }
 })
 $new = @($frames | ForEach-Object { $_.Decisions } | Where-Object { $_.Disposition -eq 'New' })
+# Audit only: NFKC exposes width/punctuation variants of the same timestamped message.
+# This does not change the production fingerprint or silently repair recorded inputs.
+$equivalent = @($receipts | ForEach-Object { $_.BuyerMessages } | ForEach-Object {
+    [pscustomobject]@{Key=(ConvertTo-Json -InputObject @($_.Role,$_.Text.Normalize([Text.NormalizationForm]::FormKC),[string]$_.Timestamp) -Compress); Message=$_}
+} | Group-Object Key)
 $summaryPath = Join-Path $session 'summary.json'
 $summary = if (Test-Path -LiteralPath $summaryPath) { Get-Content -LiteralPath $summaryPath -Raw | ConvertFrom-Json } else { $null }
 $audit = [ordered]@{
@@ -23,6 +28,8 @@ $audit = [ordered]@{
     AiInvokedResults=@($receipts | Where-Object AiInvoked).Count
     AiHttpAttempts=[long]($receipts | Measure-Object AiCalls -Sum).Sum
     DuplicateEmittedFingerprints=$new.Count-@($new.Fingerprint | Sort-Object -Unique).Count
+    EquivalentMessageDuplicates=[long](($equivalent | ForEach-Object { $_.Count-1 } | Measure-Object -Sum).Sum)
+    EquivalentDuplicateGroups=@($equivalent | Where-Object Count -gt 1 | ForEach-Object { @{Count=$_.Count;Messages=@($_.Group.Message)} })
     KnowledgeV2Matches=[long]($receipts | ForEach-Object { $_.KnowledgeV2.CandidateCount } | Measure-Object -Sum).Sum
     SentMessages=[long]($receipts | Measure-Object SentMessages -Sum).Sum
     SendBoundaryViolations=@($receipts | Where-Object { $_.SendEnabled -or $_.SendEntryInvoked -or $_.SentMessages -ne 0 -or $_.ForbiddenBusinessCalls -ne 0 }).Count
@@ -30,4 +37,4 @@ $audit = [ordered]@{
 }
 $output = Join-Path $session 'acceptance-audit.json'
 $audit | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $output -Encoding utf8
-[pscustomobject]@{AuditPath=$output;Messages=$audit.BuyerMessageCount;Previews=$audit.SuccessfulPreviews;AiResults=$audit.AiInvokedResults;Sent=$audit.SentMessages;Duplicates=$audit.DuplicateEmittedFingerprints}
+[pscustomobject]@{AuditPath=$output;Messages=$audit.BuyerMessageCount;Previews=$audit.SuccessfulPreviews;AiResults=$audit.AiInvokedResults;Sent=$audit.SentMessages;ExactFingerprintDuplicates=$audit.DuplicateEmittedFingerprints;EquivalentMessageDuplicates=$audit.EquivalentMessageDuplicates}

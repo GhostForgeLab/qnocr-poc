@@ -3,7 +3,7 @@
 独立的千牛视觉采集实验：窗口捕获 → 布局裁剪 → OCR → BuyerMessage → 统一MessageEnvelope。
 主程序使用 C# / .NET 8 / Windows；V1.0增加独立.NET Framework 4.8离线兼容性宿主，不修改qnbot。
 
-## V1.3 AI Shadow（OpenRouter冒烟通过，真实10条验收未完成）
+## V1.3 AI Shadow（真实测试完成，准确性与知识质量未通过）
 
 默认 `--shadow` 仍为AI OFF / Send OFF。显式开启：
 
@@ -48,9 +48,10 @@ ProductId保留在回执上下文：现有生成入口没有商品ID提示参数
 旧端点曾返回 `HTTP 530 / error code: 1033`；切换OpenRouter后，简单请求实测HTTP 200并返回 `OPENROUTER_OK`。
 匿名合成样例也通过原装生成服务获得中文ReplySuggestion：AiCalls=1、SendEnabled=false、SentMessages=0。
 Provider来源、备份和回滚步骤见 [VALIDATION_V13_OPENROUTER.md](VALIDATION_V13_OPENROUTER.md)。
-真实10条业务验收仍未执行；先前端点失败记录保留在 [VALIDATION_V13.md](VALIDATION_V13.md)。
+真实测试已执行：原10条问题加1条规格补测，10类均生成预览，Send为0；原首条漏触发、4条标点变体重复入队、知识命中0。
+因此仅证明AI预览链路可运行，不代表新消息准确性或知识驱动回复通过。先前端点失败记录保留在 [VALIDATION_V13.md](VALIDATION_V13.md)。
 续验增加了原SalesAgent和Knowledge V2的Shadow观察日志、实际生成路由追踪和耗时。
-本轮251帧真实捕获未出现新问题，10条验收仍待买家端发送，见 [VALIDATION_V13_ACCEPTANCE.md](VALIDATION_V13_ACCEPTANCE.md)。
+最终逐条回复、耗时、质量与调整建议见 [VALIDATION_V13_ACCEPTANCE.md](VALIDATION_V13_ACCEPTANCE.md)；前次251帧零新增只作为等待记录。
 观察开关仅作用于复制的测试作用域；未修改qnbot核心，也未把观察结果注入Prompt。
 
 ## V1.2 新消息 Shadow
