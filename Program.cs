@@ -13,7 +13,7 @@ using QnocrPoc.Adapter;
 using QnocrPoc.Shadow;
 
 Console.OutputEncoding = Encoding.UTF8;
-Console.WriteLine("[QN OCR POC V1.1]");
+Console.WriteLine("[QN OCR POC V1.2]");
 Console.WriteLine($"Time: {DateTimeOffset.Now:O}");
 Console.WriteLine($"Runtime: {System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription}");
 var operation = "Capture";
@@ -42,7 +42,7 @@ try
         try
         {
             var summary = await new QnocrShadowRunner().RunAsync(new(frames, interval, identity), cancellation.Token);
-            return summary.Status is "Completed" or "Cancelled" ? 0 : 3;
+            return summary.Status is "Completed" or "Cancelled" or "StoppedByRequest" ? 0 : 3;
         }
         finally { Console.CancelKeyPress -= handler; }
     }

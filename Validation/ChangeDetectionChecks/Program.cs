@@ -107,4 +107,4 @@ ProductChecks.Run(Check);
 MessageChecks.Run(Check);
 await AdapterChecks.RunAsync(Check);
 await ShadowChecks.RunAsync(Check);
-Console.WriteLine($"Passed {passed} checks (V0.4 through V1.1). Fixtures: {root}");
+Console.WriteLine($"Passed {passed} checks (V0.4 through V1.2). Fixtures: {root}");

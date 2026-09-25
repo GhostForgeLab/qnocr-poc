@@ -82,7 +82,8 @@ internal sealed class VisualLayoutLocator
         if (panelTop is null) return null;
         var margin = (int)((right - center) * .04);
         var chatTop = Edge("chat header separator", false, hint.ChatRegion.Top,
-            panelTop.Value + (int)(height * .02), panelTop.Value + (int)(height * .13), center.Value + margin, right.Value - margin, .82);
+            // Reception centers with an expanded summary header have a taller non-message area.
+            panelTop.Value + (int)(height * .02), panelTop.Value + (int)(height * .20), center.Value + margin, right.Value - margin, .82);
         var editorTop = Edge("message/editor separator", false, hint.InputRegion.Top,
             hint.InputRegion.Top - (int)(height * .16), hint.InputRegion.Top + (int)(height * .16), center.Value + margin, right.Value - margin, .82);
         var productBottom = Edge("product/footer separator", false, hint.ProductRegion.Bottom,

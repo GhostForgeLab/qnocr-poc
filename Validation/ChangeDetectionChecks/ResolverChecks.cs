@@ -84,6 +84,9 @@ internal static class ResolverChecks
         check(visual.Diagnostics.Any(line => line.Contains("chat header separator")), "diagnostics retain the visual boundary evidence");
 
         var movedPath = Fixture("separators_moved", true, header: 167, editor: 541);
+        var expandedHeader = resolver.ResolveWithGeometry(Fixture("expanded_summary_header", true, header: 211, editor: 550), unavailable);
+        check(expandedHeader.Chat.Source == "Visual" && expandedHeader.Chat.Bounds.Top == 212 && expandedHeader.Chat.Bounds.Bottom is >= 550 and <= 551,
+            "expanded summary header retains visual editor boundary rather than clipping newest bubble with ratio fallback");
         var moved = resolver.ResolveWithGeometry(movedPath, unavailable);
         check(moved.Chat.Bounds.Size == visual.Chat.Bounds.Size && moved.Chat.Bounds.Location != visual.Chat.Bounds.Location,
             "same-size visual fixture moves the chat rectangle without changing crop dimensions");

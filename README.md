@@ -1,9 +1,41 @@
-# qnocr-poc V1.1
+# qnocr-poc V1.2
 
 独立的千牛视觉采集实验：窗口捕获 → 布局裁剪 → OCR → BuyerMessage → 统一MessageEnvelope。
 主程序使用 C# / .NET 8 / Windows；V1.0增加独立.NET Framework 4.8离线兼容性宿主，不修改qnbot。
 
-## V1.1 真实千牛 OCR Shadow
+## V1.2 新消息 Shadow
+
+运行方式保持 `dotnet run -- --shadow`，默认持续观察，Ctrl+C停止。
+隔离联调用 `dotnet run -- --shadow --identity Validation/QnbotCompatibility/identity_mapping.json`；
+宿主准备仍使用下方V1.1命令。当前只支持操作员保持同一个会话，不自动验证或切换买家身份。
+
+V1.2取代V1.1的“首帧发出历史快照”行为：首帧只保存证据和指纹，不生成Envelope，
+控制台出现 `BASELINE READY` 后才由买家端开始测试。聊天有变化时重新OCR完整聊天区域，
+`NewMessageTracker` 比较消息，只有New消息进入统一Envelope和隔离Adapter。
+
+- `Models/MessageFingerprint.cs` 使用Role、精确Text、完整Timestamp、ProductId进行长度前缀编码和SHA256计算。
+  不模糊归并不同文字；同时以不含ProductId的消息键避免商品面板变更让同一条历史消息重发。
+- 基线及已见指纹在本次进程内持续保留，截图失败、窗口尺寸/裁剪变化不会清除消息去重记录。
+  相同文字在不同时间出现仍是不同消息。同一秒、同角色、同文字的两次真实发送无法可靠区分。
+- 新滚入视野且时间早于观察开始的旧消息记为HistoricalBeforeObservation；明显未来时间（超过观察时间5秒）记为Review。
+  时间按China Standard Time比较，依赖机器时钟、聊天显示时区及OCR时间正确；不使用捕获时间替代消息时间。
+- 每次聊天OCR前，对**同一张完整截图**的商品区域重新OCR。无可靠ID时立即为空；不沿用上一帧ProductId。
+  静止帧不执行OCR，商品字段为空并标记NotEvaluatedNoChatChange。当前可见商品与每条消息的真实关联仍未验证。
+- 新增 `frame_*/message-comparison.json` 保存每条原消息索引、Fingerprint、ConversationMessageKey及判定。
+  原始OCR、完整消息批次、筛选后的Envelope和Adapter回执一并保存；基线/重复消息没有Envelope文件。
+  多条同时出现时可能装入一个Envelope，验收按消息条数统计，不能只数Envelope文件。
+- `summary.json` 增加NewMessages、BaselineMessages、DuplicateObservations、HistoricalObservations、ConvertedMessages。
+  DuplicateObservations表示拦截的重复观察，不是重复发送率。实际重复率和漏检率需与买家发送记录人工对照。
+- 除Ctrl+C外，可在打印的本次会话目录创建空文件 `stop.request`，循环在下一帧前正常停止并写摘要。
+  指纹仅在当前进程内有效，不承诺跨进程持久投递或崩溃恢复；转换失败保留Envelope和回执，不自动重发。
+
+本版是单会话、保守证据规则的Shadow实验。OCR文字/时间抖动仍可能造成错误指纹；
+无完整可靠时间、气泡被裁切或置信度不足的文字只留作Review，不宣称捕获成功。
+实测修正了展开摘要栏的分隔线搜索范围，避免比例回退截断最底部气泡；
+商品ID末尾的OCR方框（复制图标）可作为分隔符，仍不修补数字或截取字母数字型号。
+实测记录见 [VALIDATION_V12.md](VALIDATION_V12.md)。
+
+## V1.1 真实千牛 OCR Shadow（历史行为，新增判定以V1.2为准）
 
 `Shadow/QnocrShadowRunner.cs` 串联实时截图、布局解析、商品OCR、聊天变化检测、聊天OCR、
 保守消息结构化和MessageEnvelope。`ShadowAdapterClient` 通过JSON文件调用隔离.NET4.8宿主的
@@ -532,5 +564,5 @@ dotnet run 2>&1 | Tee-Object -FilePath Output/run.log
 截图和原始日志保留在本地 Output，不进入 Git。
 历史实测：V0.1 [VALIDATION.md](VALIDATION.md)，V0.2 [VALIDATION_V02.md](VALIDATION_V02.md)。
 
-范围止于 V1.1 真实千牛OCR到隔离Adapter日志。UIA仍仅用于几何定位，不读取消息或商品ID文本。
+范围止于 V1.2 新消息去重和隔离Shadow验证。UIA仍仅用于几何定位，不读取消息或商品ID文本。
 未修改qnbot核心业务；未连接运行中的qnbot，未启用AI回复或发送。

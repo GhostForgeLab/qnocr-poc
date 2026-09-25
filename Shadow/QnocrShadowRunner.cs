@@ -1,5 +1,4 @@
 using System.Drawing;
-using System.Security.Cryptography;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using QnocrPoc.Adapter;
@@ -15,7 +14,8 @@ namespace QnocrPoc.Shadow;
 
 public sealed record ShadowRunOptions(int? MaximumFrames = null, int IntervalMilliseconds = 1000, string? IdentityMappingPath = null);
 public sealed record ShadowRunSummary(string Status, int Attempts, int SuccessfulFrames, int FailedFrames,
-    int ProductOcrCalls, int ChatOcrCalls, int Envelopes, int ConvertedEnvelopes, int DeferredEnvelopes, string SessionDirectory);
+    int ProductOcrCalls, int ChatOcrCalls, int Envelopes, int ConvertedEnvelopes, int DeferredEnvelopes, string SessionDirectory,
+    int NewMessages, int BaselineMessages, int DuplicateObservations, int HistoricalObservations, int ConvertedMessages);
 
 public sealed class QnocrShadowRunner
 {
@@ -23,16 +23,18 @@ public sealed class QnocrShadowRunner
     private readonly Func<string, QianniuWindow?, Task<ResolvedLayout>> _layout;
     private readonly Func<string, OcrResult> _ocr;
     private readonly Func<string, string?, string, CancellationToken, Task<ShadowAdapterResult>> _adapt;
+    private readonly Func<DateTime> _displayNow;
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true, Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
 
     public QnocrShadowRunner(Func<string, Task<CaptureResult>>? capture = null,
         Func<string, QianniuWindow?, Task<ResolvedLayout>>? layout = null, Func<string, OcrResult>? ocr = null,
-        Func<string, string?, string, CancellationToken, Task<ShadowAdapterResult>>? adapt = null)
+        Func<string, string?, string, CancellationToken, Task<ShadowAdapterResult>>? adapt = null, Func<DateTime>? displayNow = null)
     {
         _capture = capture;
         _layout = layout ?? new QianniuLayoutResolver().ResolveAsync;
         _ocr = ocr ?? new PaddleOcrService().Recognize;
         _adapt = adapt ?? new ShadowAdapterClient().ConvertAsync;
+        _displayNow = displayNow ?? (() => TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, TimeZoneInfo.FindSystemTimeZoneById("China Standard Time")));
     }
 
     public async Task<ShadowRunSummary> RunAsync(ShadowRunOptions options, CancellationToken token = default)
@@ -66,7 +68,10 @@ public sealed class QnocrShadowRunner
                 ?? throw new InvalidOperationException("Show a visible Qianniu reception center before starting Shadow.");
             capture = directory => windows.CaptureAsync(window, directory);
         }
-        Save(Path.Combine(session, "session.json"), new { Mode = "ShadowOnly", StartedAt = DateTimeOffset.Now,
+        var observationStart = _displayNow();
+        var tracker = new NewMessageTracker(observationStart);
+        Save(Path.Combine(session, "session.json"), new { Mode = "ShadowOnly", StartedAt = DateTimeOffset.Now, ObservationStart = observationStart,
+            DisplayTimeZone = "China Standard Time", FingerprintFields = "Role,Text,Timestamp,ProductId", DeduplicationScope = "One process session, operator-held single conversation",
             options.MaximumFrames, options.IntervalMilliseconds, IsTestIdentity = isTestIdentity,
             IdentityBinding = identityPath is null ? "Unavailable" : "OperatorProvidedConversationUnverified",
             Window = window is null ? null : new { window.ProcessName, window.Pid, Hwnd = $"0x{window.Hwnd:X}", window.WindowTitle, window.WindowBounds } });
@@ -74,19 +79,18 @@ public sealed class QnocrShadowRunner
         var detector = new ChatRegionChangeDetector();
         var structurer = new BuyerMessageStructurer();
         var extractor = new QianniuRegionExtractor();
-        string? previousChat = null, cachedProductHash = null;
+        string? previousChat = null;
         QianniuLayout? previousLayout = null;
-        ProductContext? product = null;
-        OcrResult? productOcr = null;
-        var productEvidenceFrame = 0;
         var attempts = 0; var frames = 0; var failures = 0; var productCalls = 0; var chatCalls = 0; var envelopes = 0; var converted = 0; var deferred = 0;
+        var newMessages = 0; var baselineMessages = 0; var duplicates = 0; var historical = 0; var convertedMessages = 0;
         var status = "Completed";
-        Console.WriteLine($"[SHADOW ONLY] Session: {session}\nIdentity: {(identityPath is null ? "Unavailable" : isTestIdentity ? "Explicit TEST mapping, not real account identity" : "Operator mapping; current conversation unverified")}\nFirst frame is a historical baseline snapshot. No AI, SalesAgent, coordinator or send consumer is connected.");
+        Console.WriteLine($"[SHADOW ONLY] Session: {session}\nIdentity: {(identityPath is null ? "Unavailable" : isTestIdentity ? "Explicit TEST mapping, not real account identity" : "Operator mapping; current conversation unverified")}\nFirst frame establishes baseline without envelopes. Hold one conversation. Ctrl+C or session stop.request stops observation. No AI, SalesAgent, coordinator or send consumer is connected.");
         try
         {
             while (options.MaximumFrames is null || attempts < options.MaximumFrames)
             {
                 token.ThrowIfCancellationRequested();
+                if (File.Exists(Path.Combine(session, "stop.request"))) { status = "StoppedByRequest"; break; }
                 attempts++;
                 var at = DateTimeOffset.Now;
                 string? fullPath = null;
@@ -104,22 +108,13 @@ public sealed class QnocrShadowRunner
                     extractor.Extract(fullPath, slot, pixels);
                     var productPath = Path.Combine(slot, "product_region.png");
                     var chatPath = Path.Combine(slot, "chat_region.png");
-                    var productHash = Convert.ToHexString(SHA256.HashData(await File.ReadAllBytesAsync(productPath, token)));
-                    var cacheHit = productOcr is not null && productHash == cachedProductHash && previousLayout?.ProductRegion == pixels.ProductRegion;
-                    if (!cacheHit)
-                    {
-                        token.ThrowIfCancellationRequested();
-                        productCalls++;
-                        productOcr = _ocr(productPath);
-                        product = profiles.Resolve(productOcr);
-                        cachedProductHash = productHash;
-                        productEvidenceFrame = attempts;
-                    }
                     var reset = previousLayout is null || previousLayout.ScreenshotSize != pixels.ScreenshotSize || previousLayout.ChatRegion != pixels.ChatRegion;
                     var change = reset || previousChat is null ? null : detector.Detect(previousChat, chatPath);
                     var kind = previousChat is null ? "BaselineSnapshot" : reset ? "LayoutResetSnapshot" : change!.Changed ? "ChangedSnapshot" : "Unchanged";
                     var adapterResults = new List<ShadowAdapterResult>();
                     var messageCount = 0; var reviewCount = 0;
+                    ProductContext? product = null;
+                    NewMessageComparison? comparison = null;
                     string? eventDirectory = null;
                     if (reset || change!.Changed)
                     {
@@ -129,16 +124,28 @@ public sealed class QnocrShadowRunner
                         File.Copy(fullPath, Path.Combine(eventDirectory, "window.png"));
                         foreach (var (file, _) in pixels.GetRegions()) File.Copy(Path.Combine(slot, file), Path.Combine(eventDirectory, file));
                         var pinnedChat = Path.Combine(eventDirectory, "chat_region.png");
+                        // Always recognize the current capture's product panel. Never carry an earlier ProductId forward.
+                        productCalls++;
+                        var productOcr = _ocr(Path.Combine(eventDirectory, "product_region.png"));
+                        product = profiles.Resolve(productOcr);
                         chatCalls++;
                         var chatOcr = _ocr(pinnedChat);
                         var batch = structurer.Structure(chatOcr, product!.ProductId ?? "", "SameCaptureVisibleProductNotVerifiedMessageAssociation");
                         messageCount = batch.Messages.Count; reviewCount = batch.ReviewItems.Count;
                         Save(Path.Combine(eventDirectory, "layout.json"), layout);
                         Save(Path.Combine(eventDirectory, "chat-ocr.json"), chatOcr);
-                        Save(Path.Combine(eventDirectory, "product-ocr.json"), productOcr! with { ImagePath = Path.Combine(eventDirectory, "product_region.png") });
+                        Save(Path.Combine(eventDirectory, "product-ocr.json"), productOcr);
                         Save(Path.Combine(eventDirectory, "buyer-messages.json"), batch);
                         Save(Path.Combine(eventDirectory, "product-context.json"), product);
-                        IMessageSource source = new OcrMessageSource(_ => Task.FromResult(batch), sellerId, buyerId);
+                        comparison = tracker.Compare(batch.Messages, _displayNow());
+                        Save(Path.Combine(eventDirectory, "message-comparison.json"), comparison);
+                        newMessages += comparison.NewMessages.Count;
+                        baselineMessages += comparison.Decisions.Count(d => d.Disposition == "Baseline");
+                        duplicates += comparison.Decisions.Count(d => d.Disposition is "DuplicateFingerprint" or "ContextChangedOnly");
+                        historical += comparison.Decisions.Count(d => d.Disposition == "HistoricalBeforeObservation");
+                        // Original batch/evidence remain intact; only selected messages enter the event interface.
+                        var newBatch = batch with { Messages = comparison.NewMessages, Evidence = [] };
+                        IMessageSource source = new OcrMessageSource(_ => Task.FromResult(newBatch), sellerId, buyerId);
                         var index = 0;
                         await foreach (var envelope in source.ReadAsync(token))
                         {
@@ -147,16 +154,18 @@ public sealed class QnocrShadowRunner
                             Save(envelopePath, envelope);
                             var receipt = await _adapt(envelopePath, identityPath, Path.Combine(eventDirectory, $"adapter_{index:D3}"), token);
                             adapterResults.Add(receipt);
-                            if (receipt.Status == "Converted") converted++; else deferred++;
+                            if (receipt.Status == "Converted") { converted++; convertedMessages += receipt.ConvertedMessages; } else deferred++;
                         }
+                        if (comparison.IsBaseline) Console.WriteLine("[Shadow] BASELINE READY: historical messages suppressed; ready for buyer test messages.");
                     }
                     frames++;
-                    Append(session, new { Frame = attempts, CapturedAt = at, Mode = "ShadowOnly", Kind = kind, IsNewMessage = false,
+                    Append(session, new { Frame = attempts, CapturedAt = at, Mode = "ShadowOnly", Kind = kind, IsNewMessage = comparison?.NewMessages.Count > 0,
                         IsTestIdentity = isTestIdentity, IdentityBinding = identityPath is null ? "Unavailable" : "OperatorProvidedConversationUnverified",
                         ChatBounds = pixels.ChatRegion, ProductBounds = pixels.ProductRegion, LayoutSources = layout.GetRegions().Select(x => new { x.Name, x.Region.Source }),
-                        ProductStatus = product!.Status.ToString(), product.ProductId, ProductCacheHit = cacheHit, ProductEvidenceFrame = productEvidenceFrame,
-                        Change = change, ConfirmedMessages = messageCount, ReviewItems = reviewCount, EventDirectory = eventDirectory, AdapterResults = adapterResults });
-                    Console.WriteLine($"[Shadow] frame={attempts} {kind}; product={product.Status}; productCache={cacheHit}; messages={messageCount}; adapter={string.Join(',', adapterResults.Select(x => x.Status))}");
+                        ProductStatus = product?.Status.ToString() ?? "NotEvaluatedNoChatChange", ProductId = product?.ProductId ?? "", ProductEvidenceFrame = product is null ? (int?)null : attempts,
+                        Change = change, ConfirmedMessages = messageCount, NewMessages = comparison?.NewMessages.Count ?? 0,
+                        Decisions = comparison?.Decisions, ReviewItems = reviewCount, EventDirectory = eventDirectory, AdapterResults = adapterResults });
+                    Console.WriteLine($"[Shadow] frame={attempts} {kind}; product={product?.Status.ToString() ?? "NotEvaluated"}; confirmed={messageCount}; new={comparison?.NewMessages.Count ?? 0}; totalNew={newMessages}; adapter={string.Join(',', adapterResults.Select(x => x.Status))}");
                     previousChat = chatPath;
                     previousLayout = pixels;
                 }
@@ -164,7 +173,7 @@ public sealed class QnocrShadowRunner
                 catch (Exception ex)
                 {
                     failures++;
-                    previousChat = null; previousLayout = null; cachedProductHash = null; productOcr = null; product = null;
+                    previousChat = null; previousLayout = null;
                     Append(session, new { Frame = attempts, CapturedAt = at, Mode = "ShadowOnly", Kind = "FrameFailed", ErrorType = ex.GetType().Name, Error = ex.Message });
                     Console.WriteLine($"[Shadow] frame={attempts} failed: {ex.GetType().Name}: {ex.Message}");
                     if (status == "CaptureTimedOut") break;
@@ -178,11 +187,13 @@ public sealed class QnocrShadowRunner
         finally
         {
             if (status == "Completed" && (failures > 0 || deferred > 0)) status = "CompletedWithIssues";
-            var summary = new ShadowRunSummary(status, attempts, frames, failures, productCalls, chatCalls, envelopes, converted, deferred, session);
+            var summary = new ShadowRunSummary(status, attempts, frames, failures, productCalls, chatCalls, envelopes, converted, deferred, session,
+                newMessages, baselineMessages, duplicates, historical, convertedMessages);
             Save(Path.Combine(session, "summary.json"), summary);
             Console.WriteLine($"[Shadow] stopped: {JsonSerializer.Serialize(summary)}");
         }
-        return new(status, attempts, frames, failures, productCalls, chatCalls, envelopes, converted, deferred, session);
+        return new(status, attempts, frames, failures, productCalls, chatCalls, envelopes, converted, deferred, session,
+            newMessages, baselineMessages, duplicates, historical, convertedMessages);
     }
 
     private static void Save<T>(string path, T value) => File.WriteAllText(path, JsonSerializer.Serialize(value, JsonOptions));

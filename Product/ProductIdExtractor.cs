@@ -11,7 +11,7 @@ public sealed class ProductIdExtractor
     public const int MaximumIdLength = 16;
     public double MinimumConfidence { get; }
     private const string Label = @"(?:(?:商品|宝贝|产品)[ \t]*(?:ID|编号)|(?<![\p{L}\p{N}_])(?:item_id|itemid|ID))";
-    private static readonly Regex LabeledNumber = Pattern(Label + @"[ \t]*[:#]?[ \t]*(?<id>[0-9]+(?:[ \t]+[0-9]+)*)(?=$|[\s,;|/()\[\]{}，；、。】])");
+    private static readonly Regex LabeledNumber = Pattern(Label + @"[ \t]*[:#]?[ \t]*(?<id>[0-9]+(?:[ \t]+[0-9]+)*)(?=$|[\s,;|/()\[\]{}，；、。】□])");
     private static readonly Regex LabelOnly = Pattern(@"^" + Label + @"[ \t]*[:#]?[ \t]*$");
     private static readonly Regex OtherIdentifier = Pattern(@"订单|交易|会员|用户|买家|卖家|店铺|物流|运单|快递|手机|电话|order|trade|user|buyer|seller|shop|sku");
 
