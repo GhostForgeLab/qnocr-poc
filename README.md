@@ -1,7 +1,21 @@
-# qnocr-poc V1.8
+# qnocr-poc V1.9
 
 独立的千牛视觉采集实验：窗口捕获 → 布局裁剪 → OCR → BuyerMessage → 统一MessageEnvelope。
 主程序使用 C# / .NET 8 / Windows；V1.0增加独立.NET Framework 4.8离线兼容性宿主，不修改qnbot。
+
+## V1.9 会话身份与商品引用绑定
+
+外层 `MessageSession` 现在持久记录 OCR 买家显示名、创建/最近观察时间、当前可见 `ProductId`，
+以及带来源和捕获时间的 `ProductReference` 历史。当前商品无法识别时，`ProductId` 仍留空；
+历史引用只供追踪，**不会被复用为当前商品**。
+`SessionContextView` 另输出同买家的消息时间线、商品引用与逐消息 `MessageProductLink` 旁路关系。
+引用状态明确为“同帧可见，消息归属未验证”，不是商品实体或真实平台身份认证。
+
+Shadow 新消息的 `agent-pipeline.jsonl` 增加 `BUYER_BOUND`、`PRODUCT_REFERENCE_BOUND`、
+`MESSAGE_ATTACHED`；AI OFF 时也在对应帧保存 `session-context_*.json`。
+原 MessageEnvelope、qnbot 核心、AI Prompt/生成、发送与人工确认逻辑均未改。
+多买家与多商品隔离、旧 Session 文件迁移、真实千牛单帧引用落盘及合成 AI 预览回归见
+[VALIDATION_V19.md](VALIDATION_V19.md)。
 
 ## V1.8 AI Provider / Model 配置层
 
