@@ -149,6 +149,7 @@ public sealed class DurableShadowDispatch : IDisposable
                         try
                         {
                             AtomicJson.Write(Path.Combine(Folder(item), "reply-preview.json"), preview);
+                            new PreviewConfirmationService(_root).InitializePreview(Folder(item), preview);
                             if (!_agentTrace.Preview(item, preview)) throw new IOException("Reply preview audit failed.");
                         }
                         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)

@@ -17,7 +17,8 @@ public sealed record ShadowRunSummary(string Status, int Attempts, int Successfu
     int NewMessages, int BaselineMessages, int DuplicateObservations, int HistoricalObservations, int ConvertedMessages,
     bool AiEnabled = false, int AiInvokedResults = 0, int ReplyPreviews = 0, double ElapsedSeconds = 0,
     int BuyerSessions = 0, int UncertainMessages = 0, int RecoveryEvents = 0, int JournalErrors = 0, string? StateDirectory = null,
-    int OutOfScopeMessages = 0, int EmptyReplies = 0, int AiErrors = 0, int AiCalls = 0);
+    int OutOfScopeMessages = 0, int EmptyReplies = 0, int AiErrors = 0, int AiCalls = 0,
+    bool SendEnabled = false, int SentMessages = 0);
 
 public sealed class QnocrShadowRunner
 {
@@ -74,10 +75,10 @@ public sealed class QnocrShadowRunner
         var runIds = new HashSet<string>(StringComparer.Ordinal); var sessionIds = new HashSet<string>(StringComparer.Ordinal);
         var outOfScopeMessages = 0;
         var status = "Completed";
-        AtomicJson.Write(Path.Combine(run, "session.json"), new { Version = "1.6", StartedAt = DateTimeOffset.Now, StateDirectory = stateRoot,
+        AtomicJson.Write(Path.Combine(run, "session.json"), new { Version = "1.7", StartedAt = DateTimeOffset.Now, StateDirectory = stateRoot,
             options.MaximumFrames, options.MaximumMinutes, AiEnabled = options.AiShadow, SendEnabled = false,
             AllowedAiSession = allowedAiSession, Identity = "Per-buyer OCR label sessions; test identities are isolated, no platform identity inference" });
-        Console.WriteLine($"[SHADOW V1.6] Session: {run}\nState: {stateRoot}\nAI={(options.AiShadow ? "ON" : "OFF")}; Send=OFF; first buyer snapshot is baseline. stop.request stops cleanly.");
+        Console.WriteLine($"[SHADOW V1.7] Session: {run}\nState: {stateRoot}\nAI={(options.AiShadow ? "ON" : "OFF")}; Send=OFF; first buyer snapshot is baseline. stop.request stops cleanly.");
         Console.WriteLine($"[Shadow Flags] AI_ENABLED={options.AiShadow.ToString().ToLowerInvariant()} SEND_ENABLED=false");
         try
         {

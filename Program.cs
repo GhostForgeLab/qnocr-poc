@@ -31,13 +31,19 @@ if (args.Length == 3 && args[0] == "--ocr-worker")
 }
 
 Console.OutputEncoding = Encoding.UTF8;
-Console.WriteLine("[QN OCR POC V1.6]");
+Console.WriteLine("[QN OCR POC V1.7]");
 Console.WriteLine($"Time: {DateTimeOffset.Now:O}");
 Console.WriteLine($"Runtime: {System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription}");
 var operation = "Capture";
 
 try
 {
+    if (args.Length > 0 && args[0] is "--preview" or "--confirm-send" or "--cancel-preview")
+    {
+        operation = "Human send confirmation";
+        return await ConfirmSendCommand.RunAsync(args);
+    }
+
     if (args.Length > 0 && args[0] == "--shadow")
     {
         int? frames = null;
