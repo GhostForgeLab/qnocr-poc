@@ -21,6 +21,13 @@ namespace CompatibilityHost
         }
         private static async Task<int> RunAsync(string[] args)
         {
+            if (args.Length == 2 && args[0] == "--ai-configure-openrouter")
+            {
+                Console.WriteLine(Json.Serialize(AiShadowRuntime.ConfigureOpenRouter(args[1])));
+                return 0;
+            }
+            if (args.Length == 1 && args[0] == "--ai-provider-smoke")
+                return await new AiShadowRuntime().TestProviderAsync();
             if (args.Length == 1 && args[0] == "--ai-preflight") { Console.WriteLine(Json.Serialize(new AiShadowRuntime().Preflight())); return 0; }
             if (args.Length == 4 && args[0] == "--ai-shadow") return await RunAiShadowAsync(args[1], args[2], args[3]);
             if (args.Length == 4 && args[0] == "--shadow-convert") return RunShadowConversion(args[1], args[2], args[3]);

@@ -12,6 +12,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Reference Include="System.Web.Extensions" />
+    <Reference Include="System.Net.Http" />
     <EmbeddedResource Include="$(QnbotSourceRoot)/source-manifest.json" LogicalName="QnbotSourceManifest.json" />
     <Compile Include="../../Integration/**/*.cs" Link="Integration/%(Filename)%(Extension)" />
     <Compile Include="$(QnbotSourceRoot)/src/Bot/ChatRecord/ChatResponse.cs" Link="Upstream/ChatResponse.cs" />

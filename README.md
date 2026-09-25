@@ -3,7 +3,7 @@
 独立的千牛视觉采集实验：窗口捕获 → 布局裁剪 → OCR → BuyerMessage → 统一MessageEnvelope。
 主程序使用 C# / .NET 8 / Windows；V1.0增加独立.NET Framework 4.8离线兼容性宿主，不修改qnbot。
 
-## V1.3 AI Shadow（外部端点待恢复，真实10条验收未完成）
+## V1.3 AI Shadow（OpenRouter冒烟通过，真实10条验收未完成）
 
 默认 `--shadow` 仍为AI OFF / Send OFF。显式开启：
 
@@ -12,6 +12,12 @@
 ./Validation/QnbotCompatibility/Prepare-AiShadow.ps1
 dotnet build Validation/QnbotCompatibility/QnbotCompatibility.csproj
 ./Validation/QnbotCompatibility/bin/Debug/net48/QnbotCompatibility.exe --ai-preflight
+
+# 配置OpenRouter：Key来自当前进程的OPENROUTER_API_KEY，或已保存的本地OpenRouter配置
+# 本机若仍继承旧Key，可先刷新已存在的Windows用户环境变量：
+# $env:OPENROUTER_API_KEY = [Environment]::GetEnvironmentVariable('OPENROUTER_API_KEY', 'User')
+./Validation/QnbotCompatibility/bin/Debug/net48/QnbotCompatibility.exe --ai-configure-openrouter openai/gpt-5.5
+./Validation/QnbotCompatibility/bin/Debug/net48/QnbotCompatibility.exe --ai-provider-smoke
 
 # 需要明确批准AI端点和数据范围；保持千牛单会话，等BASELINE READY后再发测试问题
 dotnet run -- --shadow --ai-shadow --identity Validation/QnbotCompatibility/identity_mapping.json
@@ -23,8 +29,10 @@ dotnet run -- --shadow --ai-shadow --identity Validation/QnbotCompatibility/iden
 使用复制的数据目录、测试店铺设置作用域，不修改原qnbot设置或SalesAgent/Knowledge V2/Prompt/Send Chain代码。
 运行库按SHA256校验；反射仅在本任务的隔离宿主进程中调用已有内部生成入口、设置数据目录与测试设置作用域，不接触千牛或Bot进程内存。
 
-本轮已获授权的AI目的地是 `sub.cn2.io`，模型 `gpt-5.5`；生成入口拒绝其他域名。
-API Key留在本地忽略目录，预检仅输出模型和域名，错误诊断先脱敏。
+AI目的地已切换为 `https://openrouter.ai/api/v1`，模型 `openai/gpt-5.5`；生成入口校验该完整BaseUrl。
+配置命令先备份原设置，再通过原装AiEndpointStore保存Provider列表；保留原Prompt和生成参数。
+API Key使用Windows当前用户DPAPI加密，留在本地忽略目录，预检仅输出模型和域名，错误诊断先脱敏。
+须以原Windows用户运行配置命令和AI宿主；后续运行直接读取已保存配置，无需重新注入环境变量。
 测试身份不代表真实账号；源码及运行库未改动并不等于已经接入运行中的qnbot。
 ProductId保留在回执上下文：现有生成入口没有商品ID提示参数，因此不拼造商品链接、不改写Prompt。
 当前测试作用域也没有已验证的商品Knowledge V2库，不能把本地POC sample profile当作真实业务知识或声称商品上下文已进入AI推理。
@@ -37,8 +45,10 @@ ProductId保留在回执上下文：现有生成入口没有商品ID提示参数
 控制台打印 `AI Response Preview`，不连接发送消费者。
 退出摘要包含AiInvokedResults（发生过模型调用的结果数）和ReplyPreviews；HTTP请求次数以各回执AiCalls为准。
 
-实测冒烟已进入真实生成服务，但端点返回 `HTTP 530 / error code: 1033`，没有有效答案。
-当前不可宣称10条通过或评价回复质量，详见 [VALIDATION_V13.md](VALIDATION_V13.md)。
+旧端点曾返回 `HTTP 530 / error code: 1033`；切换OpenRouter后，简单请求实测HTTP 200并返回 `OPENROUTER_OK`。
+匿名合成样例也通过原装生成服务获得中文ReplySuggestion：AiCalls=1、SendEnabled=false、SentMessages=0。
+Provider来源、备份和回滚步骤见 [VALIDATION_V13_OPENROUTER.md](VALIDATION_V13_OPENROUTER.md)。
+真实10条业务验收仍未执行；先前端点失败记录保留在 [VALIDATION_V13.md](VALIDATION_V13.md)。
 
 ## V1.2 新消息 Shadow
 

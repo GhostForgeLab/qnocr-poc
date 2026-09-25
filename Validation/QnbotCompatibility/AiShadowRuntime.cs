@@ -11,7 +11,7 @@ using System.Web.Script.Serialization;
 namespace CompatibilityHost
 {
     // Loads the unchanged generation service as a library. Never constructs App/QN or initializes delivery.
-    internal sealed class AiShadowRuntime
+    internal sealed partial class AiShadowRuntime
     {
         private readonly Assembly bot;
         private readonly string root;
@@ -81,8 +81,7 @@ namespace CompatibilityHost
             foreach (var endpoint in (IEnumerable)Call("Bot.ChromeNs.AiEndpointStore", "GetEnabledEndpoints"))
             {
                 var url = (string)endpoint.GetType().GetProperty("BaseUrl").GetValue(endpoint, null);
-                if (!string.Equals(SafeHost(url), "sub.cn2.io", StringComparison.OrdinalIgnoreCase))
-                    throw new InvalidOperationException("AI endpoint differs from the host explicitly approved for this validation.");
+                RequireOpenRouter(url);
             }
             if ((bool)Call("Bot.Params+Robot", "GetIsAutoReply")) throw new InvalidOperationException("Send must remain OFF.");
             var rules = Call("Bot.ChromeNs.BotFeatureStore", "GetAutoReplyRules");
