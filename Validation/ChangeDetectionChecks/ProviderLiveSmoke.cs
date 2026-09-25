@@ -11,15 +11,18 @@ internal static class ProviderLiveSmoke
         Directory.CreateDirectory(root);
         var sessionId = new string('A', 64);
         var identity = Path.GetFullPath("Validation/QnbotCompatibility/identity_mapping.json");
+        var capturedAt = DateTimeOffset.Now;
         var session = new MessageSession(sessionId, "seller-test", "buyer-test", "synthetic-fixture",
-            "IsolatedTestIdentity", "", identity);
+            "IsolatedTestIdentity", "", identity, "synthetic-fixture", capturedAt, capturedAt,
+            [new ProductReference("1051087533910", "SyntheticFixture", capturedAt,
+                "synthetic-provider-fixture:frame_000000", "HistoricalUnverified")]);
         var question = new BuyerMessage { Text = "你好，请回复一句简短的测试问候。",
             Timestamp = new DateTime(2026, 9, 25, 21, 0, 0) };
         var envelope = new MessageEnvelope("Qianniu.OCR", session.SellerId, session.BuyerId, "",
             [new("buyer", question.Text, question.Timestamp)]) { ProductBinding = "SyntheticProviderValidation" };
         var messageId = MessageFingerprint.StableId(sessionId, question);
         var item = new DispatchItem(messageId, MessageFingerprint.Create(question), session, envelope,
-            DateTimeOffset.Now, true, CaptureId: "synthetic-provider-fixture:frame_000001",
+            capturedAt, true, CaptureId: "synthetic-provider-fixture:frame_000001",
             AiRequestId: MessageFingerprint.AiRequestId(messageId));
         var context = SessionContextBuilder.Build(item, Array.Empty<DispatchItem>());
         var trace = new AgentPipelineTrace(root);
@@ -40,6 +43,8 @@ internal static class ProviderLiveSmoke
         var result = new { Mode = "ProviderPipelineSyntheticSmoke", Status = final.State,
             ProviderConfig = Path.GetFullPath(providerConfigPath), AiCalls = actualCalls,
             ReplyPreviewCount = preview is null ? 0 : 1, SentMessages = sendCount,
+            ProductReferenceCount = context.ProductReferences?.Count ?? 0,
+            CurrentProductId = context.ProductId, MessageLinkCount = context.MessageProductLinks?.Count ?? 0,
             SendEnabled = false, Preview = previewPath, Receipt = receiptPath, Evidence = root,
             Reply = preview?.Reply };
         File.WriteAllText(Path.Combine(root, "summary.json"), JsonSerializer.Serialize(result));

@@ -34,6 +34,15 @@ public sealed class AgentPipelineTrace(string runDirectory)
         var created = _sessionSeen.Add(item.Session.SessionId);
         if (created && !Write(new(DateTimeOffset.Now, "SESSION_CREATED", captureId, item.Session.SessionId, item.Session.BuyerId,
             item.MessageId, requestId, null, item.Envelope.ProductId, 1, null, null, "Context view created for this run"))) return false;
+        if (!Write(new(DateTimeOffset.Now, "BUYER_BOUND", captureId, item.Session.SessionId, item.Session.BuyerId,
+            item.MessageId, requestId, null, item.Envelope.ProductId, 1, null, null,
+            "OCR display label; platform identity not inferred"))) return false;
+        if (item.Envelope.ProductId.Length > 0 && !Write(new(DateTimeOffset.Now, "PRODUCT_REFERENCE_BOUND", captureId,
+            item.Session.SessionId, item.Session.BuyerId, item.MessageId, requestId, null,
+            item.Envelope.ProductId, 1, null, null, "Visible in same capture; message association unverified"))) return false;
+        if (!Write(new(DateTimeOffset.Now, "MESSAGE_ATTACHED", captureId, item.Session.SessionId, item.Session.BuyerId,
+            item.MessageId, requestId, null, item.Envelope.ProductId, 1, null, null,
+            item.Envelope.ProductId.Length == 0 ? "No visible product reference" : item.Envelope.ProductBinding))) return false;
         return Write(new(DateTimeOffset.Now, "SESSION_UPDATED", captureId, item.Session.SessionId, item.Session.BuyerId,
             item.MessageId, requestId, null, item.Envelope.ProductId, 1, null, null, null));
     }

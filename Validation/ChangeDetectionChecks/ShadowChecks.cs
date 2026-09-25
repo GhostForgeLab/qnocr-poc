@@ -75,6 +75,15 @@ internal static class ShadowChecks
         check(result.NewMessages == 1 && result.BaselineMessages == 1 && result.DuplicateObservations == 1 && result.Envelopes == 1, "baseline plus repeated changed frames produce exactly one envelope");
         check(result.ConvertedMessages == 1 && result.ConvertedEnvelopes == 1, "new message traverses actual isolated adapter");
         check(!Directory.GetFiles(Path.Combine(result.SessionDirectory, "frame_000001"), "envelope_*.json").Any(), "baseline has no envelope file");
+        var contextPath = Directory.GetFiles(result.SessionDirectory, "session-context_*.json", SearchOption.AllDirectories).Single();
+        using (var context = JsonDocument.Parse(File.ReadAllText(contextPath)))
+        {
+            var bound = context.RootElement;
+            check(bound.GetProperty("BuyerDisplayName").GetString() == "buyer01"
+                && bound.GetProperty("ProductReferences")[0].GetProperty("ProductId").GetString() == "1051087533910"
+                && bound.GetProperty("MessageProductLinks")[0].GetProperty("ProductId").GetString() == "1051087533910",
+                "AI-OFF Shadow still saves buyer, session, message and product-reference context");
+        }
         var receipt = Directory.GetFiles(result.StateDirectory!, "shadow-adapter-result.json", SearchOption.AllDirectories).Single();
         using (var doc = JsonDocument.Parse(File.ReadAllText(receipt)))
         {

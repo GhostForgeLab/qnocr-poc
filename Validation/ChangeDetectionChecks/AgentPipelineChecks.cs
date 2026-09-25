@@ -37,6 +37,9 @@ internal static class AgentPipelineChecks
             && context.Messages.Select(m => m.Text).SequenceEqual(new[] { "多少钱", "可以刻字吗" }), "context contains same-session history and current message, never another buyer");
         check(context.CaptureId == latest.CaptureId && context.AiRequestId == latest.AiRequestId && context.ModelInputMessageCount == 2,
             "capture, session and AI request IDs link without changing MessageEnvelope");
+        check(context.BuyerDisplayName == "synthetic-buyer" && context.ProductReferences?.Single().ProductId == "1051087533910"
+            && context.MessageProductLinks?.Count == 2 && context.MessageProductLinks.All(link => link.ProductId == "1051087533910"),
+            "session context carries buyer label and per-message product reference sidecars");
         var trace = new AgentPipelineTrace(root);
         check(trace.MessageCaptured(latest), "captured event and session events persist before dispatch");
         var adapterCalls = 0;
@@ -56,7 +59,8 @@ internal static class AgentPipelineChecks
         }
         var successEvents = File.ReadAllLines(Path.Combine(root, "agent-pipeline.jsonl")).Select(s => JsonDocument.Parse(s).RootElement.Clone()).ToArray();
         check(successEvents.Select(e => e.GetProperty("Event").GetString()).SequenceEqual(new[]
-            { "MESSAGE_CAPTURED", "SESSION_CREATED", "SESSION_UPDATED", "AI_REQUEST", "AI_RESPONSE", "REPLY_PREVIEW_CREATED" }),
+            { "MESSAGE_CAPTURED", "SESSION_CREATED", "BUYER_BOUND", "PRODUCT_REFERENCE_BOUND", "MESSAGE_ATTACHED",
+                "SESSION_UPDATED", "AI_REQUEST", "AI_RESPONSE", "REPLY_PREVIEW_CREATED" }),
             "one message follows the complete ordered Agent lifecycle");
         check(successEvents.All(e => e.GetProperty("CaptureId").GetString() == latest.CaptureId
             && e.GetProperty("SessionId").GetString() == sid && e.GetProperty("AiRequestId").GetString() == latest.AiRequestId),

@@ -59,7 +59,7 @@ public sealed class QnocrShadowRunner
             mapping = Path.Combine(run, "identity.snapshot.json"); File.WriteAllText(mapping, json);
         }
         var registry = new SessionRegistry(stateRoot, run, mapping);
-        var agentTrace = options.AiShadow ? new AgentPipelineTrace(run) : null;
+        var agentTrace = new AgentPipelineTrace(run);
         var native = new NativeWorkerClient();
         var windowCapture = new QianniuWindowCapture();
         var profiles = new ProductContextResolver(Path.Combine(AppContext.BaseDirectory, "Product", "product-profiles.sample.json"));
@@ -76,11 +76,11 @@ public sealed class QnocrShadowRunner
         var runIds = new HashSet<string>(StringComparer.Ordinal); var sessionIds = new HashSet<string>(StringComparer.Ordinal);
         var outOfScopeMessages = 0;
         var status = "Completed";
-        AtomicJson.Write(Path.Combine(run, "session.json"), new { Version = "1.8", StartedAt = DateTimeOffset.Now, StateDirectory = stateRoot,
+        AtomicJson.Write(Path.Combine(run, "session.json"), new { Version = "1.9", StartedAt = DateTimeOffset.Now, StateDirectory = stateRoot,
             options.MaximumFrames, options.MaximumMinutes, AiEnabled = options.AiShadow, SendEnabled = false,
             AllowedAiSession = allowedAiSession, ProviderConfig = options.AiProviderConfigPath ?? "Config/ai-provider.json",
             Identity = "Per-buyer OCR label sessions; test identities are isolated, no platform identity inference" });
-        Console.WriteLine($"[SHADOW V1.8] Session: {run}\nState: {stateRoot}\nAI={(options.AiShadow ? "ON" : "OFF")}; Send=OFF; first buyer snapshot is baseline. stop.request stops cleanly.");
+        Console.WriteLine($"[SHADOW V1.9] Session: {run}\nState: {stateRoot}\nAI={(options.AiShadow ? "ON" : "OFF")}; Send=OFF; first buyer snapshot is baseline. stop.request stops cleanly.");
         Console.WriteLine($"[Shadow Flags] AI_ENABLED={options.AiShadow.ToString().ToLowerInvariant()} SEND_ENABLED=false");
         try
         {
@@ -154,7 +154,8 @@ public sealed class QnocrShadowRunner
                         var observedBuyer = SessionRegistry.ReadBuyer(batch, chatOcr);
                         if (observedBuyer is not null)
                         {
-                            buyerSession = registry.Resolve(observedBuyer, productId); sessionIds.Add(buyerSession.SessionId);
+                            var frameCaptureId = $"{Path.GetFileName(run)}:frame_{attempts:D6}";
+                            buyerSession = registry.Resolve(observedBuyer, productId, captureTime, frameCaptureId); sessionIds.Add(buyerSession.SessionId);
                             tracker = registry.Tracker(buyerSession, _displayNow()); comparison = tracker.Compare(batch.Messages, _displayNow());
                             AtomicJson.Write(Path.Combine(eventDirectory, "message-comparison.json"), comparison);
                             AtomicJson.Write(Path.Combine(eventDirectory, "buyer-session.json"), buyerSession);
@@ -165,13 +166,15 @@ public sealed class QnocrShadowRunner
                                 await foreach (var envelope in source.ReadAsync(token))
                                 {
                                     var messageId = MessageFingerprint.StableId(buyerSession.SessionId, message);
-                                    var captureId = $"{Path.GetFileName(run)}:frame_{attempts:D6}";
+                                    var captureId = frameCaptureId;
                                     var item = new DispatchItem(messageId, decision.Fingerprint, buyerSession, envelope, captureTime, options.AiShadow,
                                         CaptureId: captureId, AiRequestId: options.AiShadow ? MessageFingerprint.AiRequestId(messageId) : null);
                                     dispatch.Record(item, decision.Disposition, "NotStarted", "NotStarted", "Original source time preserved; normalized key only for outer comparison");
                                     if (decision.Disposition == "New")
                                     {
                                         if (agentTrace is not null && !agentTrace.MessageCaptured(item)) throw new IOException("AI capture/session audit is unavailable.");
+                                        var context = SessionContextBuilder.Build(item, dispatch.Snapshot());
+                                        AtomicJson.Write(Path.Combine(eventDirectory, $"session-context_{decision.MessageIndex + 1:D3}.json"), context);
                                         if (options.AiShadow && buyerSession.SessionId != allowedAiSession)
                                         {
                                             outOfScopeMessages++;
@@ -180,8 +183,7 @@ public sealed class QnocrShadowRunner
                                         }
                                         else
                                         {
-                                            var context = options.AiShadow ? SessionContextBuilder.Build(item, dispatch.Snapshot()) : null;
-                                            if (dispatch.Submit(item, context)) { runIds.Add(item.MessageId); newCount++; }
+                                            if (dispatch.Submit(item, options.AiShadow ? context : null)) { runIds.Add(item.MessageId); newCount++; }
                                             else duplicates++;
                                         }
                                         AtomicJson.Write(Path.Combine(eventDirectory, $"envelope_{decision.MessageIndex + 1:D3}.json"), envelope);
@@ -195,8 +197,8 @@ public sealed class QnocrShadowRunner
                         }
                         else
                         {
-                            if (options.AiShadow && messageCount > 0)
-                                agentTrace!.SessionMissing($"{Path.GetFileName(run)}:frame_{attempts:D6}", productId, messageCount);
+                            if (messageCount > 0)
+                                agentTrace.SessionMissing($"{Path.GetFileName(run)}:frame_{attempts:D6}", productId, messageCount);
                             var unknown = new MessageSession(MessageFingerprint.SessionId(run, "", "unknown"), "", "", "UnknownOrAmbiguous", "Unverified", productId, null);
                             foreach (var message in batch.Messages)
                             {

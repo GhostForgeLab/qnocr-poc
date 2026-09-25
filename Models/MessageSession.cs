@@ -1,7 +1,9 @@
 namespace QnocrPoc.Models;
 
 public sealed record MessageSession(string SessionId, string SellerId, string BuyerId, string ObservedBuyer,
-    string IdentityBinding, string ProductId, string? IdentityPath);
+    string IdentityBinding, string ProductId, string? IdentityPath,
+    string? BuyerDisplayName = null, DateTimeOffset CreatedAt = default, DateTimeOffset LastActivityAt = default,
+    IReadOnlyList<ProductReference>? ProductReferences = null);
 public sealed record MessageLifecycle(DateTimeOffset CaptureTime, string Source, string Buyer, string ProductId,
     string SessionId, string MessageId, string Fingerprint, string Stage, string AdapterResult, string DispatchResult,
     string AiState, int Attempt, string? Detail = null);
@@ -9,7 +11,10 @@ public sealed record MessageLifecycle(DateTimeOffset CaptureTime, string Source,
 /// <summary>Observed session input for an AI request; buyer ID is an explicit isolated test binding.</summary>
 public sealed record SessionContextView(string SessionId, string BuyerId, string ProductId,
     IReadOnlyList<EnvelopeMessage> Messages, DateTimeOffset CapturedAt, string CaptureId, string MessageId,
-    string AiRequestId, int ModelInputMessageCount);
+    string AiRequestId, int ModelInputMessageCount, string? BuyerDisplayName = null,
+    DateTimeOffset CreatedAt = default, DateTimeOffset LastActivityAt = default,
+    IReadOnlyList<ProductReference>? ProductReferences = null,
+    IReadOnlyList<MessageProductLink>? MessageProductLinks = null);
 
 /// <summary>Model confidence is unavailable until a calibrated score exists; never invent a probability.</summary>
 public sealed record ReplyPreview(string SessionId, string BuyerId, SessionContextView Input, string Reply,

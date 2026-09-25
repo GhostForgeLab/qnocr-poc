@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using QnocrPoc.Models;
+using QnocrPoc.Product;
 
 namespace QnocrPoc.Shadow;
 
@@ -30,8 +31,10 @@ public sealed class SessionRegistry(string stateRoot, string runId, string? mapp
             && char.IsDigit(outlier[outlier.Length - 1]) ? majority.Key : null;
     }
 
-    public MessageSession Resolve(string observedBuyer, string productId)
+    public MessageSession Resolve(string observedBuyer, string productId, DateTimeOffset? observedAt = null, string? captureId = null)
     {
+        var at = observedAt ?? DateTimeOffset.Now;
+        productId = ProductIdExtractor.IsValidProductId(productId) ? productId : "";
         var map = mappingPath is null ? null : JsonNode.Parse(File.ReadAllText(mappingPath))!.AsObject();
         var seller = map?["SellerId"]?.GetValue<string>() ?? "";
         var buyer = map?["BuyerId"]?.GetValue<string>() ?? "";
@@ -39,6 +42,10 @@ public sealed class SessionRegistry(string stateRoot, string runId, string? mapp
         var sid = MessageFingerprint.SessionId(seller == "" ? runId : seller, buyer, observedBuyer);
         var folder = Path.Combine(stateRoot, "sessions", sid);
         Directory.CreateDirectory(folder);
+        var sessionFile = Path.Combine(folder, "session.json");
+        var previous = File.Exists(sessionFile) ? JsonSerializer.Deserialize<MessageSession>(File.ReadAllText(sessionFile)) : null;
+        if (File.Exists(sessionFile) && (previous is null || previous.SessionId != sid || previous.ObservedBuyer != observedBuyer))
+            throw new InvalidDataException("Persisted buyer session is unreadable or does not match the observed identity.");
         string? identity = null;
         if (test)
         {
@@ -55,9 +62,20 @@ public sealed class SessionRegistry(string stateRoot, string runId, string? mapp
             _boundRealBuyer ??= observedBuyer;
             if (_boundRealBuyer == observedBuyer) { identity = Path.Combine(folder, "identity.json"); AtomicJson.Write(identity, map); }
         }
+        var references = (previous?.ProductReferences ?? Array.Empty<ProductReference>())
+            .Where(reference => ProductIdExtractor.IsValidProductId(reference.ProductId)).ToList();
+        if (productId.Length > 0)
+        {
+            references.RemoveAll(reference => reference.ProductId == productId);
+            references.Add(new ProductReference(productId, "Qianniu.ProductRegion.OCR", at,
+                captureId ?? "", "VisibleInSameCapture;MessageAssociationUnverified"));
+        }
         var result = new MessageSession(sid, seller, buyer, observedBuyer,
-            test ? "IsolatedTestIdentity; OcrLabelNotPlatformIdentity" : identity is null ? "Unverified; dispatch held" : "OperatorMapping; OcrLabelNotPlatformIdentity", productId, identity);
-        AtomicJson.Write(Path.Combine(folder, "session.json"), result);
+            test ? "IsolatedTestIdentity; OcrLabelNotPlatformIdentity" : identity is null ? "Unverified; dispatch held" : "OperatorMapping; OcrLabelNotPlatformIdentity",
+            productId, identity, observedBuyer,
+            previous?.CreatedAt is { } created && created != default ? created : at,
+            at, references.OrderBy(reference => reference.CapturedAt).TakeLast(128).ToArray());
+        AtomicJson.Write(sessionFile, result);
         return result;
     }
     public NewMessageTracker Tracker(MessageSession session, DateTime now)
