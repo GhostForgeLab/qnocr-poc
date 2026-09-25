@@ -99,13 +99,17 @@ namespace CompatibilityHost
             {
                 var stats = Call("Bot.ChromeNs.BotRuntimeStats", "GetSnapshot");
                 var error = (string)stats.GetType().GetProperty("LastError").GetValue(stats, null) ?? "";
-                foreach (var endpoint in (IEnumerable)Call("Bot.ChromeNs.AiEndpointStore", "GetEnabledEndpoints"))
-                {
-                    var key = (string)endpoint.GetType().GetProperty("ApiKey").GetValue(endpoint, null);
-                    if (!string.IsNullOrEmpty(key)) error = error.Replace(key, "[REDACTED]");
-                }
-                return error;
+                return RedactSecrets(error);
             }
+        }
+        public string RedactSecrets(string text)
+        {
+            foreach (var endpoint in (IEnumerable)Call("Bot.ChromeNs.AiEndpointStore", "GetEnabledEndpoints"))
+            {
+                var key = (string)endpoint.GetType().GetProperty("ApiKey").GetValue(endpoint, null);
+                if (!string.IsNullOrEmpty(key)) text = text.Replace(key, "[REDACTED]");
+            }
+            return text;
         }
         private sealed class Manifest { public bool SendEnabled { get; set; } public RuntimeFile[] RuntimeFiles { get; set; } }
         private sealed class RuntimeFile { public string Path { get; set; } public string Sha256 { get; set; } }

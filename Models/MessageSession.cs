@@ -5,3 +5,17 @@ public sealed record MessageSession(string SessionId, string SellerId, string Bu
 public sealed record MessageLifecycle(DateTimeOffset CaptureTime, string Source, string Buyer, string ProductId,
     string SessionId, string MessageId, string Fingerprint, string Stage, string AdapterResult, string DispatchResult,
     string AiState, int Attempt, string? Detail = null);
+
+/// <summary>Observed session input for an AI request; buyer ID is an explicit isolated test binding.</summary>
+public sealed record SessionContextView(string SessionId, string BuyerId, string ProductId,
+    IReadOnlyList<EnvelopeMessage> Messages, DateTimeOffset CapturedAt, string CaptureId, string MessageId,
+    string AiRequestId, int ModelInputMessageCount);
+
+/// <summary>Model confidence is unavailable until a calibrated score exists; never invent a probability.</summary>
+public sealed record ReplyPreview(string SessionId, string BuyerId, SessionContextView Input, string Reply,
+    double? Confidence, DateTimeOffset CreatedAt, string SendStatus, string CaptureId, string AiRequestId,
+    string ReplyPreviewId);
+
+public sealed record AgentPipelineEvent(DateTimeOffset Timestamp, string Event, string CaptureId,
+    string? SessionId, string? BuyerId, string? MessageId, string? AiRequestId, string? ReplyPreviewId,
+    string ProductId, int MessageCount, int? PromptLength, string? PromptLengthScope, string? Detail);

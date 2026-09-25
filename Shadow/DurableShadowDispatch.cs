@@ -5,7 +5,8 @@ namespace QnocrPoc.Shadow;
 
 public sealed record DispatchItem(string MessageId, string Fingerprint, MessageSession Session, MessageEnvelope Envelope,
     DateTimeOffset CaptureTime, bool AiEnabled, string State = "Pending", int Attempts = 0,
-    DateTimeOffset NextAttempt = default, string? ReceiptPath = null, bool AiInvoked = false);
+    DateTimeOffset NextAttempt = default, string? ReceiptPath = null, bool AiInvoked = false,
+    string? CaptureId = null, string? AiRequestId = null, string? AiResultStatus = null);
 
 /// <summary>Local outer idempotency and recoverable outbox. Ambiguous target outcomes are held, never blindly replayed.</summary>
 public sealed class DurableShadowDispatch : IDisposable
@@ -18,15 +19,17 @@ public sealed class DurableShadowDispatch : IDisposable
     private readonly Dictionary<string, DispatchItem> _items = new(StringComparer.Ordinal);
     private readonly CancellationToken _token;
     private readonly bool? _aiMode;
+    private readonly AgentPipelineTrace? _agentTrace;
     private Task? _worker;
     private volatile bool _stopping;
     public int JournalErrors { get; private set; }
     public int CorruptStateFiles { get; private set; }
 
     public DurableShadowDispatch(string root, string journal, CancellationToken token,
-        Func<string, string?, string, CancellationToken, Task<ShadowAdapterResult>> send, bool? aiMode = null)
+        Func<string, string?, string, CancellationToken, Task<ShadowAdapterResult>> send, bool? aiMode = null,
+        AgentPipelineTrace? agentTrace = null)
     {
-        _root = Path.GetFullPath(root); _journal = journal; _token = token; _send = send; _aiMode = aiMode;
+        _root = Path.GetFullPath(root); _journal = journal; _token = token; _send = send; _aiMode = aiMode; _agentTrace = agentTrace;
         Directory.CreateDirectory(_root);
         _lock = new FileStream(Path.Combine(_root, "agent.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
         foreach (var file in Directory.EnumerateFiles(_root, "item.json", SearchOption.AllDirectories))
@@ -47,13 +50,19 @@ public sealed class DurableShadowDispatch : IDisposable
     }
     public void Start() => _worker = Task.Run(WorkAsync);
     public IReadOnlyList<DispatchItem> Snapshot() { lock (_gate) return _items.Values.ToArray(); }
-    public bool Submit(DispatchItem item)
+    public bool Submit(DispatchItem item, SessionContextView? context = null)
     {
         lock (_gate)
         {
             if (_items.ContainsKey(item.MessageId) || File.Exists(Path.Combine(Folder(item), "item.json"))) { Record(item, "OuterDuplicate", "Skipped", "NotRepeated", "Existing durable MessageId, including unreadable state held for inspection"); return false; }
             if (_items.Values.Count(i => i.State is "Pending" or "Dispatching") >= 1000) throw new IOException("Outbox capacity reached; retain capture evidence and apply backpressure.");
             var directory = Folder(item);
+            if (item.AiEnabled)
+            {
+                if (context is null || context.SessionId != item.Session.SessionId || context.MessageId != item.MessageId)
+                    throw new InvalidDataException("AI request requires a matching durable session context.");
+                AtomicJson.Write(Path.Combine(directory, "context.json"), context);
+            }
             AtomicJson.Write(Path.Combine(directory, "envelope.json"), item.Envelope);
             AtomicJson.Write(Path.Combine(directory, "item.json"), item);
             _items[item.MessageId] = item;
@@ -103,8 +112,13 @@ public sealed class DurableShadowDispatch : IDisposable
                 item = item with { State = "Dispatching", Attempts = item.Attempts + 1 };
                 Save(item); Record(item, "Attempt", "Running", "Unconfirmed", null);
                 ShadowAdapterResult result;
+                SessionContextView? context = null;
+                var requestedAt = DateTimeOffset.Now;
                 try
                 {
+                    if (item.AiEnabled)
+                        context = JsonSerializer.Deserialize<SessionContextView>(File.ReadAllText(Path.Combine(Folder(item), "context.json")))
+                            ?? throw new InvalidDataException("AI context is unavailable.");
                     result = await _send(Path.Combine(Folder(item), "envelope.json"), item.Session.IdentityPath,
                         Path.Combine(Folder(item), $"attempt_{item.Attempts:D4}"), _token);
                 }
@@ -112,11 +126,44 @@ public sealed class DurableShadowDispatch : IDisposable
                 {
                     item = item with { State = "Uncertain" }; Save(item);
                     Record(item, "Uncertain", ex.GetType().Name, "UnconfirmedHeld", "Exception cannot prove target did not accept; no automatic replay");
+                    if (item.AiEnabled && _agentTrace is not null)
+                        _agentTrace.Write(new(DateTimeOffset.Now, "AI_ERROR", item.CaptureId ?? "", item.Session.SessionId,
+                            item.Session.BuyerId, item.MessageId, item.AiRequestId, null, item.Envelope.ProductId,
+                            context?.Messages.Count ?? 1, null, null, ex.GetType().Name + "; request outcome uncertain"));
                     continue;
                 }
+                if (item.AiEnabled && context is not null && _agentTrace is not null)
+                {
+                    var inputLength = string.Join("\n", context.Messages.TakeLast(context.ModelInputMessageCount).Select(m => m.Text)).Length;
+                    var length = result.PromptLength ?? inputLength;
+                    var scope = result.PromptLength is null ? "PreCoordinatorQuestionText" : "QnbotModelQuestionArgument";
+                    _agentTrace.Request(item, context, length, scope, result.AiRequestAt ?? requestedAt);
+                    if (result.Status == "Converted" && string.IsNullOrWhiteSpace(result.ReplySuggestion))
+                        result = result with { Status = "EmptyReply", Reason = "AI result was empty; no preview created." };
+                    _agentTrace.Response(item, context, result);
+                    if (result.Status == "Converted")
+                    {
+                        var preview = new ReplyPreview(item.Session.SessionId, item.Session.BuyerId, context, result.ReplySuggestion!,
+                            null, DateTimeOffset.Now, "Shadow", item.CaptureId ?? "", context.AiRequestId, Guid.NewGuid().ToString("N"));
+                        try
+                        {
+                            AtomicJson.Write(Path.Combine(Folder(item), "reply-preview.json"), preview);
+                            if (!_agentTrace.Preview(item, preview)) throw new IOException("Reply preview audit failed.");
+                        }
+                        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                        {
+                            item = item with { State = "Uncertain", AiInvoked = result.AiInvoked, ReceiptPath = result.ReceiptPath };
+                            Save(item); Record(item, "Uncertain", "PreviewAuditFailed", "Held", ex.Message);
+                            _agentTrace.Write(new(DateTimeOffset.Now, "AI_ERROR", item.CaptureId ?? "", item.Session.SessionId,
+                                item.Session.BuyerId, item.MessageId, context.AiRequestId, null, item.Envelope.ProductId,
+                                context.Messages.Count, null, null, "Reply preview could not be audited."));
+                            continue;
+                        }
+                    }
+                }
                 var retry = result.Status is "HostUnavailable" or "HostNotStarted" or "RetryableFailure";
-                var state = result.Status == "Converted" ? "Completed" : retry ? "Pending" : result.Status == "Rejected" ? "Rejected" : "Uncertain";
-                item = item with { State = state, ReceiptPath = result.ReceiptPath, AiInvoked = result.AiInvoked,
+                var state = result.Status == "Converted" ? "Completed" : retry ? "Pending" : result.Status is "Rejected" or "EmptyReply" or "AiFailed" ? result.Status : "Uncertain";
+                item = item with { State = state, ReceiptPath = result.ReceiptPath, AiInvoked = result.AiInvoked, AiResultStatus = result.Status,
                     NextAttempt = retry ? DateTimeOffset.UtcNow.AddSeconds(Math.Min(60, Math.Pow(2, Math.Min(item.Attempts, 6)))) : default };
                 Save(item);
                 Record(item, state, result.Status, state == "Completed" ? "AcceptedByShadowCoordinator" : retry ? "RetryScheduled" : "Held", result.Reason);

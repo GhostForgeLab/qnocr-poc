@@ -3,6 +3,7 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Security.Cryptography;
+using System.Text;
 using System.Threading.Tasks;
 using System.Web.Script.Serialization;
 using QnocrPoc.Integration;
@@ -30,6 +31,8 @@ namespace CompatibilityHost
                 return await new AiShadowRuntime().TestProviderAsync();
             if (args.Length == 1 && args[0] == "--ai-preflight") { Console.WriteLine(Json.Serialize(new AiShadowRuntime().Preflight())); return 0; }
             if (args.Length == 4 && args[0] == "--ai-shadow") return await RunAiShadowAsync(args[1], args[2], args[3]);
+            if (args.Length == 5 && args[0] == "--ai-shadow") return await RunAiShadowAsync(args[1], args[2], args[3], args[4]);
+            if (args.Length == 4 && args[0] == "--agent-context-check") return await RunAgentContextCheckAsync(args[1], args[2], args[3]);
             if (args.Length == 4 && args[0] == "--dispatch-shadow") return await RunDispatchShadowAsync(args[1], args[2], args[3]);
             if (args.Length == 4 && args[0] == "--shadow-convert") return RunShadowConversion(args[1], args[2], args[3]);
             if (args.Length != 3) { Console.Error.WriteLine("Usage: QnbotCompatibility.exe envelope.json identity_mapping.json output-directory"); return 2; }
@@ -124,13 +127,20 @@ namespace CompatibilityHost
             return 0;
         }
 
-        private static async Task<int> RunAiShadowAsync(string envelopePath, string identityPath, string output)
+        private static async Task<int> RunAiShadowAsync(string envelopePath, string identityPath, string output, string contextPath = null)
         {
             var manifest = VerifySourceSnapshot();
             var envelope = Json.Deserialize<MessageEnvelope>(File.ReadAllText(envelopePath));
             var identity = Json.Deserialize<QnbotIdentityMapping>(File.ReadAllText(identityPath));
             if (!identity.IsTestMapping) throw new InvalidDataException("V1.3 requires explicit isolated test identity mapping.");
-            var items = new QnocrMessageAdapter().Convert(envelope, identity, TimeZoneInfo.FindSystemTimeZoneById("China Standard Time"), DateTime.Now, "qnocr-ai-shadow-v13");
+            AgentContextWire context = null;
+            var aiEnvelope = envelope;
+            if (contextPath != null)
+            {
+                context = Json.Deserialize<AgentContextWire>(File.ReadAllText(contextPath));
+                aiEnvelope = BuildContextEnvelope(envelope, context);
+            }
+            var items = new QnocrMessageAdapter().Convert(aiEnvelope, identity, TimeZoneInfo.FindSystemTimeZoneById("China Standard Time"), DateTime.Now, "qnocr-ai-shadow-v15");
             if (items.Count == 0) throw new InvalidDataException("No confirmed messages.");
             // Preview authorization applies only inside this isolated host. The coordinator's runtime
             // Robot remains disabled, and its send/RPA dependencies are throwing test replacements.
@@ -145,6 +155,9 @@ namespace CompatibilityHost
             var completion = new TaskCompletionSource<string>();
             var timer = System.Diagnostics.Stopwatch.StartNew();
             int callbacks = 0;
+            int promptLength = 0;
+            int modelInputMessages = 0;
+            string aiRequestAt = null;
             using (var deadline = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(120)))
             {
                 var coordinator = new BuyerMessageBurstCoordinator(async lease =>
@@ -152,8 +165,18 @@ namespace CompatibilityHost
                     System.Threading.Interlocked.Increment(ref callbacks);
                     try
                     {
-                        await ai.ObserveAsync(identity.SellerNick, identity.BuyerNick, lease.Burst.CombinedQuestion, envelope.ProductId, deadline.Token);
-                        var answer = await ai.GenerateAsync(identity.SellerNick, identity.BuyerNick, lease.Burst.CombinedQuestion, deadline.Token);
+                        var modelQuestion = BuildModelQuestion(lease.Burst.CombinedQuestion, context);
+                        promptLength = modelQuestion.Length;
+                        modelInputMessages = context == null ? lease.Burst.Items.Count : context.ModelInputMessageCount;
+                        aiRequestAt = DateTimeOffset.Now.ToString("O", System.Globalization.CultureInfo.InvariantCulture);
+                        File.WriteAllText(Path.Combine(output, "ai-request.json"), Json.Serialize(new {
+                            Event = "AI_REQUEST", SessionId = context == null ? null : context.SessionId,
+                            BuyerId = envelope.BuyerId, MessageCount = context == null ? envelope.Messages.Count : context.Messages.Count,
+                            ModelInputMessageCount = modelInputMessages, ProductId = envelope.ProductId,
+                            PromptLength = promptLength, PromptLengthScope = "QnbotModelQuestionArgument", Timestamp = aiRequestAt,
+                            AiRequestId = context == null ? null : context.AiRequestId, SendEnabled = false }));
+                        await ai.ObserveAsync(identity.SellerNick, identity.BuyerNick, modelQuestion, envelope.ProductId, deadline.Token);
+                        var answer = await ai.GenerateAsync(identity.SellerNick, identity.BuyerNick, modelQuestion, deadline.Token);
                         completion.TrySetResult(answer);
                     }
                     catch (Exception ex) { completion.TrySetException(ex); }
@@ -164,15 +187,21 @@ namespace CompatibilityHost
                 {
                     if (await Task.WhenAny(completion.Task, Task.Delay(125000)) != completion.Task) throw new TimeoutException("AI Shadow budget exhausted.");
                     reply = await completion.Task;
-                    if (string.IsNullOrWhiteSpace(reply) || reply.StartsWith("错误：", StringComparison.Ordinal)) failure = reply ?? "Empty AI result";
+                    if (string.IsNullOrWhiteSpace(reply)) failure = "Empty AI result";
+                    else if (reply.StartsWith("错误：", StringComparison.Ordinal)) failure = reply;
                 }
                 catch (Exception ex) { failure = ex.GetType().Name + ": " + ex.Message; }
+                if (failure != null) failure = ai.RedactSecrets(failure);
                 var calls = ai.AiCalls - before;
                 var receipt = new
                 {
-                    Mode = "AiShadowPreviewOnly", Status = failure == null ? "Converted" : "AiFailed", Reason = failure,
+                    Mode = "AiShadowPreviewOnly", Status = failure == null ? "Converted" : failure.Contains("Empty AI result") ? "EmptyReply" : "AiFailed", Reason = failure,
                     AiEnabled = true, SendEnabled = false, AiInvoked = calls > 0, AiCalls = calls, LastAiError = ai.LastAiError,
-                    ReplySuggestion = failure == null ? reply : null, ConvertedMessages = failure == null ? items.Count : 0,
+                    ReplySuggestion = failure == null ? reply : null, ConvertedMessages = failure == null ? envelope.Messages.Count : 0,
+                    SessionId = context == null ? null : context.SessionId, AiRequestId = context == null ? null : context.AiRequestId,
+                    ContextMessageCount = context == null ? envelope.Messages.Count : context.Messages.Count,
+                    ModelInputMessageCount = modelInputMessages, PromptLength = promptLength, PromptLengthScope = "QnbotModelQuestionArgument",
+                    AiRequestAt = aiRequestAt,
                     Input = envelope.Messages, ProductId = envelope.ProductId, ProductBinding = envelope.ProductBinding,
                     SalesAgent = ai.SalesObservation, KnowledgeV2 = ai.KnowledgeObservation, GenerationTrace = ai.GenerationTrace(),
                     AiDurationMilliseconds = ai.GenerationMilliseconds,
@@ -190,6 +219,70 @@ namespace CompatibilityHost
                 if (Guard.ForbiddenCalls != 0) throw new InvalidOperationException("Isolated coordinator attempted forbidden business operation.");
                 return failure == null ? 0 : 3;
             }
+        }
+
+        private static MessageEnvelope BuildContextEnvelope(MessageEnvelope envelope, AgentContextWire context)
+        {
+            if (context == null || string.IsNullOrWhiteSpace(context.SessionId) || context.Messages == null || context.Messages.Count < 1
+                || context.ModelInputMessageCount < 1 || context.ModelInputMessageCount > 10 || context.Messages.Count < context.ModelInputMessageCount
+                || envelope.Messages == null || envelope.Messages.Count != 1
+                || context.BuyerId != envelope.BuyerId || context.ProductId != envelope.ProductId
+                || context.Messages.Last().Role != envelope.Messages[0].Role
+                || context.Messages.Last().Text != envelope.Messages[0].Text
+                || context.Messages.Last().Timestamp != envelope.Messages[0].Timestamp)
+                throw new InvalidDataException("AI context does not match the current one-message MessageEnvelope.");
+            // The qnbot coordinator owns live-message lifecycle. Replaying history as new burst items
+            // supersedes generations and can drop the first item; only the current item enters it.
+            return envelope;
+        }
+
+        private static string BuildModelQuestion(string currentQuestion, AgentContextWire context)
+        {
+            if (context == null || context.ModelInputMessageCount == 1) return currentQuestion;
+            var history = context.Messages.Skip(context.Messages.Count - context.ModelInputMessageCount)
+                .Take(context.ModelInputMessageCount - 1);
+            var question = new StringBuilder("【同一买家会话的已确认历史消息（按时间顺序）】\n");
+            foreach (var message in history)
+                question.Append(message.Timestamp).Append(' ').Append(message.Role).Append(": ").Append(message.Text).Append('\n');
+            return question.Append("【当前买家消息】\n").Append(currentQuestion).ToString();
+        }
+
+        private static async Task<int> RunAgentContextCheckAsync(string envelopePath, string identityPath, string output)
+        {
+            var manifest = VerifySourceSnapshot();
+            var envelope = Json.Deserialize<MessageEnvelope>(File.ReadAllText(envelopePath));
+            var context = Json.Deserialize<AgentContextWire>(File.ReadAllText(Path.Combine(Path.GetDirectoryName(envelopePath), "context.json")));
+            var aiEnvelope = BuildContextEnvelope(envelope, context);
+            var identity = Json.Deserialize<QnbotIdentityMapping>(File.ReadAllText(identityPath));
+            if (!identity.IsTestMapping) throw new InvalidDataException("Context check accepts test identities only.");
+            var items = new QnocrMessageAdapter().Convert(aiEnvelope, identity,
+                TimeZoneInfo.FindSystemTimeZoneById("China Standard Time"), DateTime.Now, "qnocr-context-check-v15");
+            var completed = new TaskCompletionSource<int[]>();
+            var callbacks = 0;
+            var coordinator = new BuyerMessageBurstCoordinator(lease =>
+            {
+                System.Threading.Interlocked.Increment(ref callbacks);
+                completed.TrySetResult(new[] { lease.Burst.Items.Count,
+                    BuildModelQuestion(lease.Burst.CombinedQuestion, context).Length });
+                return Task.CompletedTask;
+            });
+            foreach (var item in items) coordinator.Enqueue(item.BurstItem);
+            if (await Task.WhenAny(completed.Task, Task.Delay(8000)) != completed.Task)
+                throw new TimeoutException("Context did not reach the coordinator.");
+            var payload = await completed.Task;
+            if (items.Count != 1 || payload[0] != 1 || callbacks != 1 || Guard.ForbiddenCalls != 0)
+                throw new InvalidDataException("Context delivery/boundary mismatch: input=" + items.Count + ", callbackItems=" + payload[0]
+                    + ", callbacks=" + callbacks + ", forbidden=" + Guard.ForbiddenCalls);
+            Directory.CreateDirectory(output);
+            var receipt = new { Mode = "LocalContextCheck", ContextMessageCount = context.Messages.Count,
+                ModelInputMessageCount = context.ModelInputMessageCount, CoordinatorItems = payload[0], PromptLength = payload[1],
+                AiInvoked = false, AiCalls = 0, SendEnabled = false, SentMessages = 0,
+                CoordinatorCallbacks = callbacks, ForbiddenBusinessCalls = Guard.ForbiddenCalls,
+                SourceFilesVerified = manifest.Sources.Length };
+            File.WriteAllText(Path.Combine(output, "context-check.json"), Json.Serialize(receipt));
+            Console.WriteLine(Json.Serialize(receipt));
+            coordinator.CancelBuyer(identity.SellerNick, identity.BuyerNick, "context_check_complete");
+            return 0;
         }
 
         private static int RunShadowConversion(string envelopePath, string identityPath, string output)

@@ -11,12 +11,13 @@ using QnocrPoc.Product;
 namespace QnocrPoc.Shadow;
 
 public sealed record ShadowRunOptions(int? MaximumFrames = null, int IntervalMilliseconds = 1000, string? IdentityMappingPath = null,
-    bool AiShadow = false, double? MaximumMinutes = null, string? StateDirectory = null);
+    bool AiShadow = false, double? MaximumMinutes = null, string? StateDirectory = null, string? AiSessionId = null);
 public sealed record ShadowRunSummary(string Status, int Attempts, int SuccessfulFrames, int FailedFrames,
     int ProductOcrCalls, int ChatOcrCalls, int Envelopes, int ConvertedEnvelopes, int DeferredEnvelopes, string SessionDirectory,
     int NewMessages, int BaselineMessages, int DuplicateObservations, int HistoricalObservations, int ConvertedMessages,
     bool AiEnabled = false, int AiInvokedResults = 0, int ReplyPreviews = 0, double ElapsedSeconds = 0,
-    int BuyerSessions = 0, int UncertainMessages = 0, int RecoveryEvents = 0, int JournalErrors = 0, string? StateDirectory = null);
+    int BuyerSessions = 0, int UncertainMessages = 0, int RecoveryEvents = 0, int JournalErrors = 0, string? StateDirectory = null,
+    int OutOfScopeMessages = 0, int EmptyReplies = 0, int AiErrors = 0);
 
 public sealed class QnocrShadowRunner
 {
@@ -39,6 +40,9 @@ public sealed class QnocrShadowRunner
             || options.MaximumMinutes is { } minutes && !double.IsFinite(minutes)) throw new ArgumentOutOfRangeException(nameof(options));
         token.ThrowIfCancellationRequested();
         if (options.AiShadow && options.IdentityMappingPath is null) throw new InvalidDataException("AI Shadow requires an explicit test mapping.");
+        if (options.AiShadow && (options.AiSessionId is null || options.AiSessionId.Length != 64 || !options.AiSessionId.All(Uri.IsHexDigit)))
+            throw new InvalidDataException("AI Shadow requires the 64-character SessionId of the explicit test buyer.");
+        var allowedAiSession = options.AiSessionId?.ToUpperInvariant();
         var run = Path.GetFullPath(Path.Combine("Output", "Shadow", $"shadow_{DateTime.Now:yyyyMMdd_HHmmss_fff}_{Guid.NewGuid():N}"));
         Directory.CreateDirectory(run);
         var stateRoot = Path.GetFullPath(options.StateDirectory ?? Path.Combine("Output", "State", "V14"));
@@ -53,23 +57,27 @@ public sealed class QnocrShadowRunner
             mapping = Path.Combine(run, "identity.snapshot.json"); File.WriteAllText(mapping, json);
         }
         var registry = new SessionRegistry(stateRoot, run, mapping);
+        var agentTrace = options.AiShadow ? new AgentPipelineTrace(run) : null;
         var native = new NativeWorkerClient();
         var windowCapture = new QianniuWindowCapture();
         var profiles = new ProductContextResolver(Path.Combine(AppContext.BaseDirectory, "Product", "product-profiles.sample.json"));
         var detector = new ChatRegionChangeDetector(); var extractor = new QianniuRegionExtractor(); var structurer = new BuyerMessageStructurer();
         using var dispatch = new DurableShadowDispatch(stateRoot, Path.Combine(run, "lifecycle.jsonl"), token,
-            _adapt ?? new ShadowAdapterClient(options.AiShadow, dispatch: true).ConvertAsync, options.AiShadow);
+            _adapt ?? (options.AiShadow
+                ? new AgentShadowClient().ConvertAsync
+                : new ShadowAdapterClient(dispatch: true).ConvertAsync), options.AiShadow, agentTrace);
         dispatch.Start();
         var watch = Stopwatch.StartNew(); var nextHeartbeat = TimeSpan.Zero;
         QianniuWindow? window = null; string? selectedTitle = null; string? previousChat = null;
         QianniuLayout? previousLayout = null;
         var attempts = 0; var frames = 0; var failures = 0; var productCalls = 0; var chatCalls = 0; var baselines = 0; var duplicates = 0; var historical = 0; var recoveries = 0; var consecutiveFailures = 0;
         var runIds = new HashSet<string>(StringComparer.Ordinal); var sessionIds = new HashSet<string>(StringComparer.Ordinal);
+        var outOfScopeMessages = 0;
         var status = "Completed";
-        AtomicJson.Write(Path.Combine(run, "session.json"), new { Version = "1.4", StartedAt = DateTimeOffset.Now, StateDirectory = stateRoot,
+        AtomicJson.Write(Path.Combine(run, "session.json"), new { Version = "1.5", StartedAt = DateTimeOffset.Now, StateDirectory = stateRoot,
             options.MaximumFrames, options.MaximumMinutes, AiEnabled = options.AiShadow, SendEnabled = false,
-            Identity = "Per-buyer OCR label sessions; test identities are isolated, no platform identity inference" });
-        Console.WriteLine($"[SHADOW V1.4] Session: {run}\nState: {stateRoot}\nAI={(options.AiShadow ? "ON" : "OFF")}; Send=OFF; first buyer snapshot is baseline. stop.request stops cleanly.");
+            AllowedAiSession = allowedAiSession, Identity = "Per-buyer OCR label sessions; test identities are isolated, no platform identity inference" });
+        Console.WriteLine($"[SHADOW V1.5] Session: {run}\nState: {stateRoot}\nAI={(options.AiShadow ? "ON" : "OFF")}; Send=OFF; first buyer snapshot is baseline. stop.request stops cleanly.");
         try
         {
             while (options.MaximumFrames is null || attempts < options.MaximumFrames)
@@ -152,12 +160,26 @@ public sealed class QnocrShadowRunner
                                 var source = new OcrMessageSource(_ => Task.FromResult(batch with { Messages = [message], Evidence = [] }), buyerSession.SellerId, buyerSession.BuyerId);
                                 await foreach (var envelope in source.ReadAsync(token))
                                 {
-                                    var item = new DispatchItem(MessageFingerprint.StableId(buyerSession.SessionId, message), decision.Fingerprint, buyerSession, envelope, captureTime, options.AiShadow);
+                                    var messageId = MessageFingerprint.StableId(buyerSession.SessionId, message);
+                                    var captureId = $"{Path.GetFileName(run)}:frame_{attempts:D6}";
+                                    var item = new DispatchItem(messageId, decision.Fingerprint, buyerSession, envelope, captureTime, options.AiShadow,
+                                        CaptureId: captureId, AiRequestId: options.AiShadow ? MessageFingerprint.AiRequestId(messageId) : null);
                                     dispatch.Record(item, decision.Disposition, "NotStarted", "NotStarted", "Original source time preserved; normalized key only for outer comparison");
                                     if (decision.Disposition == "New")
                                     {
-                                        if (dispatch.Submit(item)) { runIds.Add(item.MessageId); newCount++; }
-                                        else duplicates++;
+                                        if (agentTrace is not null && !agentTrace.MessageCaptured(item)) throw new IOException("AI capture/session audit is unavailable.");
+                                        if (options.AiShadow && buyerSession.SessionId != allowedAiSession)
+                                        {
+                                            outOfScopeMessages++;
+                                            agentTrace!.OutOfScope(item);
+                                            dispatch.Record(item, "SessionOutOfScope", "Skipped", "Held", "AI test is bound to a different buyer session");
+                                        }
+                                        else
+                                        {
+                                            var context = options.AiShadow ? SessionContextBuilder.Build(item, dispatch.Snapshot()) : null;
+                                            if (dispatch.Submit(item, context)) { runIds.Add(item.MessageId); newCount++; }
+                                            else duplicates++;
+                                        }
                                         AtomicJson.Write(Path.Combine(eventDirectory, $"envelope_{decision.MessageIndex + 1:D3}.json"), envelope);
                                     }
                                 }
@@ -169,6 +191,8 @@ public sealed class QnocrShadowRunner
                         }
                         else
                         {
+                            if (options.AiShadow && messageCount > 0)
+                                agentTrace!.SessionMissing($"{Path.GetFileName(run)}:frame_{attempts:D6}", productId, messageCount);
                             var unknown = new MessageSession(MessageFingerprint.SessionId(run, "", "unknown"), "", "", "UnknownOrAmbiguous", "Unverified", productId, null);
                             foreach (var message in batch.Messages)
                             {
@@ -221,7 +245,8 @@ public sealed class QnocrShadowRunner
         if (status is "Completed" or "StoppedByRequest" && (failures > 0 || deferred > 0)) status = "CompletedWithIssues";
         var summary = new ShadowRunSummary(status, attempts, frames, failures, productCalls, chatCalls, runIds.Count, completed, deferred, run,
             runIds.Count, baselines, duplicates, historical, completed, options.AiShadow, current.Count(i => i.AiInvoked), options.AiShadow ? completed : 0,
-            watch.Elapsed.TotalSeconds, sessionIds.Count, current.Count(i => i.State == "Uncertain"), recoveries, dispatch.JournalErrors, stateRoot);
+            watch.Elapsed.TotalSeconds, sessionIds.Count, current.Count(i => i.State == "Uncertain"), recoveries, dispatch.JournalErrors, stateRoot,
+            outOfScopeMessages, current.Count(i => i.State == "EmptyReply"), current.Count(i => i.State == "AiFailed"));
         AtomicJson.Write(Path.Combine(run, "summary.json"), summary);
         Console.WriteLine($"[Shadow] stopped: {JsonSerializer.Serialize(summary)}");
         return summary;

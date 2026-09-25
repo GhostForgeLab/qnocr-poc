@@ -17,6 +17,7 @@ public static class MessageFingerprint
         message.Timestamp.ToString("O", CultureInfo.InvariantCulture));
     public static string StableId(string sessionId, BuyerMessage message) => Hash("qnocr-v14", sessionId, ConversationMessageKey(message));
     public static string SessionId(string seller, string buyer, string observedBuyer) => Hash("session-v14", seller, buyer, observedBuyer);
+    public static string AiRequestId(string messageId) => Hash("ai-request-v15", messageId);
 
     private static string Hash(params string[] fields)
     {

@@ -4,7 +4,8 @@ using System.Text.Json;
 namespace QnocrPoc.Shadow;
 
 public sealed record ShadowAdapterResult(string Status, int ConvertedMessages, string? ReceiptPath, string? Reason,
-    bool AiInvoked = false, string? ReplySuggestion = null);
+    bool AiInvoked = false, string? ReplySuggestion = null, int? PromptLength = null, DateTimeOffset? AiRequestAt = null,
+    int AiCalls = 0);
 
 /// <summary>Calls only the isolated conversion-only host. Never attaches to a running Bot process.</summary>
 public sealed class ShadowAdapterClient(bool aiShadow = false, bool dispatch = false)
@@ -20,6 +21,11 @@ public sealed class ShadowAdapterClient(bool aiShadow = false, bool dispatch = f
         start.ArgumentList.Add(Path.GetFullPath(envelopePath));
         start.ArgumentList.Add(identityPath is null ? "-" : Path.GetFullPath(identityPath));
         start.ArgumentList.Add(Path.GetFullPath(outputDirectory));
+        if (aiShadow)
+        {
+            var contextPath = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(envelopePath))!, "context.json");
+            if (File.Exists(contextPath)) start.ArgumentList.Add(contextPath);
+        }
         Process? child;
         try { child = Process.Start(start); }
         catch (System.ComponentModel.Win32Exception) { return new("HostNotStarted", 0, null, "Host could not start; retry is safe."); }
@@ -47,8 +53,12 @@ public sealed class ShadowAdapterClient(bool aiShadow = false, bool dispatch = f
             (!aiShadow && !dispatch && value.GetProperty("RuntimeInitializers").GetInt32() != 0) ||
             ((aiShadow || dispatch) && (value.GetProperty("SendEnabled").GetBoolean() || value.GetProperty("SendEntryInvoked").GetBoolean() || value.GetProperty("SentMessages").GetInt32() != 0)))
             throw new InvalidDataException("Adapter receipt violates conversion-only boundary.");
+        var promptLength = aiShadow && value.TryGetProperty("PromptLength", out var prompt) && prompt.ValueKind == JsonValueKind.Number ? prompt.GetInt32() : (int?)null;
+        var at = aiShadow && value.TryGetProperty("AiRequestAt", out var time) && time.ValueKind == JsonValueKind.String
+            && DateTimeOffset.TryParse(time.GetString(), out var parsed) ? parsed : (DateTimeOffset?)null;
         return new(value.GetProperty("Status").GetString()!, value.GetProperty("ConvertedMessages").GetInt32(), Path.GetFullPath(receiptPath),
             value.GetProperty("Reason").GetString(), aiShadow && value.GetProperty("AiInvoked").GetBoolean(),
-            aiShadow ? value.GetProperty("ReplySuggestion").GetString() : null);
+            aiShadow ? value.GetProperty("ReplySuggestion").GetString() : null, promptLength, at,
+            aiShadow && value.TryGetProperty("AiCalls", out var calls) ? calls.GetInt32() : 0);
     }
 }

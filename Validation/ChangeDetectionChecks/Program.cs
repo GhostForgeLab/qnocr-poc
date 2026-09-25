@@ -109,4 +109,5 @@ await AdapterChecks.RunAsync(Check);
 await ShadowChecks.RunAsync(Check);
 await AiShadowChecks.RunAsync(Check);
 await StabilizationChecks.RunAsync(Check);
-Console.WriteLine($"Passed {passed} checks (V0.4 through V1.4). Fixtures: {root}");
+await AgentPipelineChecks.RunAsync(Check);
+Console.WriteLine($"Passed {passed} checks (V0.4 through V1.5). Fixtures: {root}");
