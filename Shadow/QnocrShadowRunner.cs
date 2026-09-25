@@ -12,10 +12,11 @@ using QnocrPoc.Product;
 
 namespace QnocrPoc.Shadow;
 
-public sealed record ShadowRunOptions(int? MaximumFrames = null, int IntervalMilliseconds = 1000, string? IdentityMappingPath = null);
+public sealed record ShadowRunOptions(int? MaximumFrames = null, int IntervalMilliseconds = 1000, string? IdentityMappingPath = null, bool AiShadow = false);
 public sealed record ShadowRunSummary(string Status, int Attempts, int SuccessfulFrames, int FailedFrames,
     int ProductOcrCalls, int ChatOcrCalls, int Envelopes, int ConvertedEnvelopes, int DeferredEnvelopes, string SessionDirectory,
-    int NewMessages, int BaselineMessages, int DuplicateObservations, int HistoricalObservations, int ConvertedMessages);
+    int NewMessages, int BaselineMessages, int DuplicateObservations, int HistoricalObservations, int ConvertedMessages,
+    bool AiEnabled = false, int AiInvokedResults = 0, int ReplyPreviews = 0);
 
 public sealed class QnocrShadowRunner
 {
@@ -41,6 +42,7 @@ public sealed class QnocrShadowRunner
     {
         if (options.MaximumFrames is <= 0 || options.IntervalMilliseconds is < 0 or > 60000) throw new ArgumentOutOfRangeException(nameof(options));
         token.ThrowIfCancellationRequested();
+        if (options.AiShadow && options.IdentityMappingPath is null) throw new InvalidDataException("AI Shadow requires an explicit test mapping.");
         var session = Path.GetFullPath(Path.Combine("Output", "Shadow", $"shadow_{DateTime.Now:yyyyMMdd_HHmmss_fff}_{Guid.NewGuid():N}"));
         Directory.CreateDirectory(session);
         string? identityPath = null;
@@ -54,6 +56,7 @@ public sealed class QnocrShadowRunner
             sellerId = identity.RootElement.GetProperty("SellerId").GetString() ?? "";
             buyerId = identity.RootElement.GetProperty("BuyerId").GetString() ?? "";
             isTestIdentity = identity.RootElement.GetProperty("IsTestMapping").GetBoolean();
+            if (options.AiShadow && !isTestIdentity) throw new InvalidDataException("AI Shadow accepts isolated test mappings only.");
             if (string.IsNullOrWhiteSpace(sellerId) || string.IsNullOrWhiteSpace(buyerId)) throw new InvalidDataException("Explicit identity mapping must contain seller/buyer IDs.");
             identityPath = Path.Combine(session, "identity.snapshot.json");
             await File.WriteAllTextAsync(identityPath, identityJson, token);
@@ -70,7 +73,7 @@ public sealed class QnocrShadowRunner
         }
         var observationStart = _displayNow();
         var tracker = new NewMessageTracker(observationStart);
-        Save(Path.Combine(session, "session.json"), new { Mode = "ShadowOnly", StartedAt = DateTimeOffset.Now, ObservationStart = observationStart,
+        Save(Path.Combine(session, "session.json"), new { Mode = "ShadowOnly", AiEnabled = options.AiShadow, SendEnabled = false, StartedAt = DateTimeOffset.Now, ObservationStart = observationStart,
             DisplayTimeZone = "China Standard Time", FingerprintFields = "Role,Text,Timestamp,ProductId", DeduplicationScope = "One process session, operator-held single conversation",
             options.MaximumFrames, options.IntervalMilliseconds, IsTestIdentity = isTestIdentity,
             IdentityBinding = identityPath is null ? "Unavailable" : "OperatorProvidedConversationUnverified",
@@ -84,7 +87,9 @@ public sealed class QnocrShadowRunner
         var attempts = 0; var frames = 0; var failures = 0; var productCalls = 0; var chatCalls = 0; var envelopes = 0; var converted = 0; var deferred = 0;
         var newMessages = 0; var baselineMessages = 0; var duplicates = 0; var historical = 0; var convertedMessages = 0;
         var status = "Completed";
-        Console.WriteLine($"[SHADOW ONLY] Session: {session}\nIdentity: {(identityPath is null ? "Unavailable" : isTestIdentity ? "Explicit TEST mapping, not real account identity" : "Operator mapping; current conversation unverified")}\nFirst frame establishes baseline without envelopes. Hold one conversation. Ctrl+C or session stop.request stops observation. No AI, SalesAgent, coordinator or send consumer is connected.");
+        var aiCalls = 0; var previews = 0;
+        var aiDispatcher = options.AiShadow ? new AiShadowDispatcher(session, token) : null;
+        Console.WriteLine($"[SHADOW ONLY] Session: {session}\nIdentity: {(identityPath is null ? "Unavailable" : isTestIdentity ? "Explicit TEST mapping, not real account identity" : "Operator mapping; current conversation unverified")}\nFirst frame establishes baseline without envelopes. Hold one conversation. Ctrl+C or session stop.request stops observation.\nAI={(options.AiShadow ? "ON (isolated qnbot generation)" : "OFF")}; Send=OFF. No delivery consumer is connected.");
         try
         {
             while (options.MaximumFrames is null || attempts < options.MaximumFrames)
@@ -152,9 +157,10 @@ public sealed class QnocrShadowRunner
                             envelopes++;
                             var envelopePath = Path.Combine(eventDirectory, $"envelope_{++index:D3}.json");
                             Save(envelopePath, envelope);
-                            var receipt = await _adapt(envelopePath, identityPath, Path.Combine(eventDirectory, $"adapter_{index:D3}"), token);
+                            var receipt = await (aiDispatcher is null ? _adapt(envelopePath, identityPath, Path.Combine(eventDirectory, $"adapter_{index:D3}"), token)
+                                : aiDispatcher.EnqueueAsync(envelopePath, identityPath, Path.Combine(eventDirectory, $"adapter_{index:D3}"), token));
                             adapterResults.Add(receipt);
-                            if (receipt.Status == "Converted") { converted++; convertedMessages += receipt.ConvertedMessages; } else deferred++;
+                            if (receipt.Status == "Converted") { converted++; convertedMessages += receipt.ConvertedMessages; } else if (receipt.Status != "AiQueued") deferred++;
                         }
                         if (comparison.IsBaseline) Console.WriteLine("[Shadow] BASELINE READY: historical messages suppressed; ready for buyer test messages.");
                     }
@@ -186,14 +192,24 @@ public sealed class QnocrShadowRunner
         catch { status = "Failed"; throw; }
         finally
         {
-            if (status == "Completed" && (failures > 0 || deferred > 0)) status = "CompletedWithIssues";
+            if (aiDispatcher is not null)
+            {
+                Console.WriteLine("[Shadow] capture stopped; finishing bounded AI preview queue. Send remains OFF.");
+                var results = await aiDispatcher.CompleteAsync();
+                aiCalls = results.Count(r => r.AiInvoked);
+                previews = results.Count(r => r.Status == "Converted" && !string.IsNullOrWhiteSpace(r.ReplySuggestion));
+                converted += results.Count(r => r.Status == "Converted");
+                convertedMessages += results.Sum(r => r.ConvertedMessages);
+                deferred += results.Count(r => r.Status != "Converted");
+            }
+            if (status is "Completed" or "StoppedByRequest" && (failures > 0 || deferred > 0)) status = "CompletedWithIssues";
             var summary = new ShadowRunSummary(status, attempts, frames, failures, productCalls, chatCalls, envelopes, converted, deferred, session,
-                newMessages, baselineMessages, duplicates, historical, convertedMessages);
+                newMessages, baselineMessages, duplicates, historical, convertedMessages, options.AiShadow, aiCalls, previews);
             Save(Path.Combine(session, "summary.json"), summary);
             Console.WriteLine($"[Shadow] stopped: {JsonSerializer.Serialize(summary)}");
         }
         return new(status, attempts, frames, failures, productCalls, chatCalls, envelopes, converted, deferred, session,
-            newMessages, baselineMessages, duplicates, historical, convertedMessages);
+            newMessages, baselineMessages, duplicates, historical, convertedMessages, options.AiShadow, aiCalls, previews);
     }
 
     private static void Save<T>(string path, T value) => File.WriteAllText(path, JsonSerializer.Serialize(value, JsonOptions));

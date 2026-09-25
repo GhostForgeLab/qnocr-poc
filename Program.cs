@@ -13,7 +13,7 @@ using QnocrPoc.Adapter;
 using QnocrPoc.Shadow;
 
 Console.OutputEncoding = Encoding.UTF8;
-Console.WriteLine("[QN OCR POC V1.2]");
+Console.WriteLine("[QN OCR POC V1.3]");
 Console.WriteLine($"Time: {DateTimeOffset.Now:O}");
 Console.WriteLine($"Runtime: {System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription}");
 var operation = "Capture";
@@ -25,15 +25,18 @@ try
         int? frames = null;
         var interval = 1000;
         string? identity = null;
+        var aiShadow = false;
         var seen = new HashSet<string>(StringComparer.Ordinal);
-        if (args.Length % 2 != 1) { Console.Error.WriteLine("Usage: --shadow [--frames N] [--interval-ms N] [--identity mapping.json]"); return 2; }
-        for (var i = 1; i < args.Length; i += 2)
+        for (var i = 1; i < args.Length; i++)
         {
             if (!seen.Add(args[i])) { Console.Error.WriteLine("Duplicate shadow option."); return 2; }
+            if (args[i] == "--ai-shadow") { aiShadow = true; continue; }
+            if (i + 1 >= args.Length) { Console.Error.WriteLine("Missing shadow option value."); return 2; }
             if (args[i] == "--frames" && int.TryParse(args[i + 1], out var n) && n > 0) frames = n;
             else if (args[i] == "--interval-ms" && int.TryParse(args[i + 1], out var ms) && ms is >= 100 and <= 60000) interval = ms;
             else if (args[i] == "--identity" && !string.IsNullOrWhiteSpace(args[i + 1])) identity = args[i + 1];
             else { Console.Error.WriteLine("Invalid shadow option/value."); return 2; }
+            i++;
         }
         operation = "Shadow";
         using var cancellation = new CancellationTokenSource();
@@ -41,7 +44,7 @@ try
         Console.CancelKeyPress += handler;
         try
         {
-            var summary = await new QnocrShadowRunner().RunAsync(new(frames, interval, identity), cancellation.Token);
+            var summary = await new QnocrShadowRunner().RunAsync(new(frames, interval, identity, aiShadow), cancellation.Token);
             return summary.Status is "Completed" or "Cancelled" or "StoppedByRequest" ? 0 : 3;
         }
         finally { Console.CancelKeyPress -= handler; }

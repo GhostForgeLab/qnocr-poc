@@ -21,6 +21,8 @@ namespace CompatibilityHost
         }
         private static async Task<int> RunAsync(string[] args)
         {
+            if (args.Length == 1 && args[0] == "--ai-preflight") { Console.WriteLine(Json.Serialize(new AiShadowRuntime().Preflight())); return 0; }
+            if (args.Length == 4 && args[0] == "--ai-shadow") return await RunAiShadowAsync(args[1], args[2], args[3]);
             if (args.Length == 4 && args[0] == "--shadow-convert") return RunShadowConversion(args[1], args[2], args[3]);
             if (args.Length != 3) { Console.Error.WriteLine("Usage: QnbotCompatibility.exe envelope.json identity_mapping.json output-directory"); return 2; }
             var manifest = VerifySourceSnapshot();
@@ -79,6 +81,71 @@ namespace CompatibilityHost
             Console.WriteLine(Json.Serialize(result));
             coordinator.CancelBuyer(identity.SellerNick, identity.BuyerNick, "offline_test_complete");
             return 0;
+        }
+
+        private static async Task<int> RunAiShadowAsync(string envelopePath, string identityPath, string output)
+        {
+            var manifest = VerifySourceSnapshot();
+            var envelope = Json.Deserialize<MessageEnvelope>(File.ReadAllText(envelopePath));
+            var identity = Json.Deserialize<QnbotIdentityMapping>(File.ReadAllText(identityPath));
+            if (!identity.IsTestMapping) throw new InvalidDataException("V1.3 requires explicit isolated test identity mapping.");
+            var items = new QnocrMessageAdapter().Convert(envelope, identity, TimeZoneInfo.FindSystemTimeZoneById("China Standard Time"), DateTime.Now, "qnocr-ai-shadow-v13");
+            if (items.Count == 0) throw new InvalidDataException("No confirmed messages.");
+            // Preview authorization applies only inside this isolated host. The coordinator's runtime
+            // Robot remains disabled, and its send/RPA dependencies are throwing test replacements.
+            foreach (var item in items)
+            {
+                item.BurstItem.SafetyDecision.ShouldCallAi = true;
+                item.BurstItem.SafetyDecision.Note = "Explicit AI Shadow preview authorization; Send OFF";
+            }
+            Directory.CreateDirectory(output);
+            var ai = new AiShadowRuntime();
+            var before = ai.AiCalls;
+            var completion = new TaskCompletionSource<string>();
+            var timer = System.Diagnostics.Stopwatch.StartNew();
+            int callbacks = 0;
+            using (var deadline = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(120)))
+            {
+                var coordinator = new BuyerMessageBurstCoordinator(async lease =>
+                {
+                    System.Threading.Interlocked.Increment(ref callbacks);
+                    try
+                    {
+                        var answer = await ai.GenerateAsync(identity.SellerNick, identity.BuyerNick, lease.Burst.CombinedQuestion, deadline.Token);
+                        completion.TrySetResult(answer);
+                    }
+                    catch (Exception ex) { completion.TrySetException(ex); }
+                });
+                foreach (var item in items) coordinator.Enqueue(item.BurstItem);
+                string reply = null; string failure = null;
+                try
+                {
+                    if (await Task.WhenAny(completion.Task, Task.Delay(125000)) != completion.Task) throw new TimeoutException("AI Shadow budget exhausted.");
+                    reply = await completion.Task;
+                    if (string.IsNullOrWhiteSpace(reply) || reply.StartsWith("错误：", StringComparison.Ordinal)) failure = reply ?? "Empty AI result";
+                }
+                catch (Exception ex) { failure = ex.GetType().Name + ": " + ex.Message; }
+                var calls = ai.AiCalls - before;
+                var receipt = new
+                {
+                    Mode = "AiShadowPreviewOnly", Status = failure == null ? "Converted" : "AiFailed", Reason = failure,
+                    AiEnabled = true, SendEnabled = false, AiInvoked = calls > 0, AiCalls = calls, LastAiError = ai.LastAiError,
+                    ReplySuggestion = failure == null ? reply : null, ConvertedMessages = failure == null ? items.Count : 0,
+                    Input = envelope.Messages, ProductId = envelope.ProductId, ProductBinding = envelope.ProductBinding,
+                    ProductContextUsage = "Logged OCR sidecar; existing generation service has no product-ID prompt parameter. No fabricated product URL or prompt rewrite.",
+                    CoordinatorCreated = true, CoordinatorCallbacks = callbacks, ForbiddenBusinessCalls = Guard.ForbiddenCalls,
+                    SendEntryInvoked = false, SentMessages = 0, RuntimeInitializers = Guard.SuppressedInitializers,
+                    IsTestIdentity = true, SourceFilesVerified = manifest.Sources.Length, QnbotBaselineCommit = manifest.QnbotCommit,
+                    DurationMilliseconds = timer.ElapsedMilliseconds, GenerationService = "Unmodified qnbot StreamingBuyerAnswerService.GetAnswerAsync",
+                    Boundary = "Isolated actual coordinator source plus original Bot library generation method; no Bot App/QN/delivery entry startup."
+                };
+                File.WriteAllText(Path.Combine(output, "qnbot-messages.json"), Json.Serialize(items.Select(i => i.BurstItem.Message).ToArray()));
+                File.WriteAllText(Path.Combine(output, "shadow-adapter-result.json"), Json.Serialize(receipt));
+                Console.WriteLine(Json.Serialize(receipt));
+                coordinator.CancelBuyer(identity.SellerNick, identity.BuyerNick, "ai_shadow_complete");
+                if (Guard.ForbiddenCalls != 0) throw new InvalidOperationException("Isolated coordinator attempted forbidden business operation.");
+                return failure == null ? 0 : 3;
+            }
         }
 
         private static int RunShadowConversion(string envelopePath, string identityPath, string output)

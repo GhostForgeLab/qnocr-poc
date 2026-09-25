@@ -1,7 +1,44 @@
-# qnocr-poc V1.2
+# qnocr-poc V1.3
 
 独立的千牛视觉采集实验：窗口捕获 → 布局裁剪 → OCR → BuyerMessage → 统一MessageEnvelope。
 主程序使用 C# / .NET 8 / Windows；V1.0增加独立.NET Framework 4.8离线兼容性宿主，不修改qnbot。
+
+## V1.3 AI Shadow（外部端点待恢复，真实10条验收未完成）
+
+默认 `--shadow` 仍为AI OFF / Send OFF。显式开启：
+
+```powershell
+# 一次性复制固定版本qnbot运行库及当前配置/数据到.gitignore覆盖的.tools目录
+./Validation/QnbotCompatibility/Prepare-AiShadow.ps1
+dotnet build Validation/QnbotCompatibility/QnbotCompatibility.csproj
+./Validation/QnbotCompatibility/bin/Debug/net48/QnbotCompatibility.exe --ai-preflight
+
+# 需要明确批准AI端点和数据范围；保持千牛单会话，等BASELINE READY后再发测试问题
+dotnet run -- --shadow --ai-shadow --identity Validation/QnbotCompatibility/identity_mapping.json
+```
+
+隔离协调器使用原qnbot `BuyerMessageBurstCoordinator` 源码，其handler调用原装Bot库中的
+`StreamingBuyerAnswerService.GetAnswerAsync`。不启动Bot应用、QN会话或普通收发入口。
+协调器侧真实发送/RPA依赖仍为抛错替身；生成侧只调用返回string的方法，在隔离配置中关闭AutoReply和HandoffNotification。
+使用复制的数据目录、测试店铺设置作用域，不修改原qnbot设置或SalesAgent/Knowledge V2/Prompt/Send Chain代码。
+运行库按SHA256校验；反射仅在本任务的隔离宿主进程中调用已有内部生成入口、设置数据目录与测试设置作用域，不接触千牛或Bot进程内存。
+
+本轮已获授权的AI目的地是 `sub.cn2.io`，模型 `gpt-5.5`；生成入口拒绝其他域名。
+API Key留在本地忽略目录，预检仅输出模型和域名，错误诊断先脱敏。
+测试身份不代表真实账号；源码及运行库未改动并不等于已经接入运行中的qnbot。
+ProductId保留在回执上下文：现有生成入口没有商品ID提示参数，因此不拼造商品链接、不改写Prompt。
+当前测试作用域也没有已验证的商品Knowledge V2库，不能把本地POC sample profile当作真实业务知识或声称商品上下文已进入AI推理。
+
+32项有界队列使截图继续运行，AI预览串行处理；每个Envelope经过协调器，每次生成最多120秒，子进程总预算150秒。
+同一Envelope里的多条消息可能由协调器合并；不保证10条输入恰好10次模型请求。
+静止期/基线/去重规则沿用V1.2。`stop.request` 停止采集后等待已排队预览；Ctrl+C取消未完成预览。
+队列满、取消、接口失败均记录明确状态，不能把AiQueued算作AI成功。
+日志：会话 `ai-shadow.jsonl`、事件 `adapter_*/shadow-adapter-result.json`、原始输入/商品ID/ReplySuggestion与AI调用次数。
+控制台打印 `AI Response Preview`，不连接发送消费者。
+退出摘要包含AiInvokedResults（发生过模型调用的结果数）和ReplyPreviews；HTTP请求次数以各回执AiCalls为准。
+
+实测冒烟已进入真实生成服务，但端点返回 `HTTP 530 / error code: 1033`，没有有效答案。
+当前不可宣称10条通过或评价回复质量，详见 [VALIDATION_V13.md](VALIDATION_V13.md)。
 
 ## V1.2 新消息 Shadow
 
