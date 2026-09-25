@@ -1,7 +1,53 @@
-# qnocr-poc V0.7
+# qnocr-poc V0.8
 
-独立的千牛视觉采集实验：窗口捕获 → 混合布局裁剪 → 聊天/商品OCR → 商品ID提取与本地ProductProfile映射。
+独立的千牛视觉采集实验：窗口捕获 → 混合布局裁剪 → 聊天/商品OCR → 商品上下文 → 买家消息结构化。
 使用 C# / .NET 8 / Windows；未接入或修改其他项目。
+
+## V0.8 买家消息结构化
+
+新增 `Models/BuyerMessage.cs`，消息对象包含五个字段：
+
+```csharp
+string Role;       // 当前仅输出 "buyer"
+string Text;       // 气泡内OCR文本，多框按位置排序并用换行连接
+DateTime Timestamp;
+string Source;     // "Qianniu.PaddleOCR"
+string ProductId;  // 未知时为 ""
+```
+
+`Messages/BuyerMessageStructurer.cs` 使用用户确认的保守规则：
+只输出具有买家气泡、可靠正文及完整日期时间证据的消息，其他内容保留为待确认记录。
+
+```powershell
+# 单张完整聊天区域：OCR并结构化，不读取历史商品上下文
+dotnet run -- --messages Output/Regions/chat_region.png
+
+# 调用者显式提供商品上下文（不等于确认消息真实涉及该商品）
+dotnet run -- --messages Output/Regions/chat_region.png --product-id 1051087533910
+
+# 采集同一完整窗口的聊天/商品区域后生成消息
+dotnet run
+```
+
+- 面向当前浅色千牛布局：左侧白色气泡作为买家候选，右侧/蓝色气泡不会直接标为买家。
+  以背景色、轮廓、相对位置和OCR框关系筛选，属于可核验的启发式规则，不是账户身份认证。
+- 同一气泡内按OCR框位置合并文字，不跨气泡合并、不按文本内容去重，不自动修复OCR错误。
+- 要求正文和时间/昵称支持行置信度≥0.80；正文中任一已识别行低分，则整个气泡进入待确认。
+- 时间必须来自上方邻近灰色昵称/时间行，可合并框或左右分开的框。
+  仅接受有效的完整年月日时分秒；缺失、仅时分、相对日期、冲突时间均不使用采集时间代替。
+- `Timestamp.Kind=Unspecified`，保留截图显示时间，不推断时区；即使截图是昨天的消息也不会改成今天。
+- 截断气泡、表情/标点单独成文、无法确定角色或头部的内容进入ReviewItems。
+  未使用的OCR行（可能是昵称、状态、客服文字或图形误识别）也保留为待确认，不混进BuyerMessage。
+- 默认流程的商品ID来自同一截图右侧的可靠识别结果；缺失/低分/多ID时为空，不从以前的结果文件补值。
+  该字段表示采集时可见商品上下文，**不证明历史消息属于这个商品**。独立命令只接受显式传入的ID。
+- 每次输出到 `Output/Messages/buyer_messages_<时间>.json`，包含Messages、逐条Evidence、ReviewItems、
+  输入图路径/SHA256、时间含义、ProductBinding。证据记录气泡坐标、OCR行号和最低支持分数。
+- 现有 `--watch` / `--compare` 仍做变化区域OCR，未接入结构化；裁剪变化横带可能不包含完整消息头。
+  本版不做跨帧拼接、会话记忆、新消息确认、自动回复或发送。
+
+默认采集现在仅选择可见、非最小化的接待中心，防止其最小化时退回工作台并把经营数据当聊天输入。
+离线图片命令仍由调用者保证传入正确的聊天区域；其他主题/布局、图片消息和富卡片尚未全面验证。
+完整验证见 [VALIDATION_V08.md](VALIDATION_V08.md)。
 
 ## V0.7 商品上下文
 
@@ -17,7 +63,7 @@ dotnet run -- --product Output/Regions/product_region.png
 # 显式指定本地JSON映射表
 dotnet run -- --product Output/Regions/product_region.png --profiles Product/product-profiles.sample.json
 
-# 默认完整流程：捕获、布局、裁剪、聊天OCR，再执行商品OCR和测试映射
+# 默认完整流程还会在商品OCR后执行V0.8买家消息结构化
 dotnet run
 ```
 
@@ -193,7 +239,7 @@ dotnet run
 必须在千牛所在用户的交互桌面运行；受限沙箱或服务会话可能无法枚举窗口。
 本次沙箱内 EnumWindows 失败，在允许访问用户桌面的运行环境中成功。
 
-默认 `dotnet run` 在捕获、裁剪成功后先对 `chat_region.png` 执行OCR，再执行V0.7商品上下文流程。
+默认 `dotnet run` 在捕获、裁剪成功后执行聊天OCR、商品上下文和V0.8买家消息结构化。
 需要仅识别变化区域时使用上面的 `--watch` 或 `--compare`。
 直接识别图片，无需千牛运行，也不要求固定尺寸：
 
@@ -285,10 +331,10 @@ top/bottom同理；.5向远离零方向取整，宽高由边界相减，避免�
 - 记录进程名、PID、Process.MainWindowHandle；使用 EnumWindows 枚举其顶层窗口。
 - 区分进程 MainWindowHandle 与实际捕获 HWND，因为一个进程可能有多个窗口。
 - 记录窗口标题、物理像素边界、可见/最小化/DWM cloaked 状态。
-- 自动选择可见、非最小化、非 cloaked 的窗口，优先标题包含“接待中心”的窗口，再按面积排序。
+- 默认只选择可见、非最小化、非 cloaked 且标题包含“接待中心”的窗口，再按面积排序。
 - 默认显示可见窗口；`dotnet run -- --list` 显示全部匹配窗口，不截图。
 - 多店铺/多窗口时，可用枚举结果指定：`dotnet run -- --hwnd 0x实际句柄`。
-  句柄仍须属于本次发现的千牛进程。
+  句柄仍须属于本次发现的千牛进程，且是可见的接待中心。
 
 ## 捕获方案与局限
 
@@ -313,8 +359,9 @@ PrintWindow 是同步调用，依赖目标应用绘制；API 成功不等于 CEF
 
 截图：当前工作目录的 `Output/qianniu_yyyyMMdd_HHmmss.png`。
 同一秒文件名冲突时增加毫秒和唯一后缀，避免覆盖已有样本。
-退出码：0 成功（商品模式表示Matched，原有独立命令保持各自成功含义）；
-1 捕获/裁剪/OCR/目录读取失败；2 参数错误；3 商品识别/查表已完成但未可靠匹配（具体原因见Status）。
+退出码：0 成功（默认及消息模式表示至少一条确认消息；商品模式表示Matched；其他独立命令保持原成功含义）；
+1 捕获/裁剪/OCR/目录或文件读取失败；2 参数错误；3 消息模式无可确认消息，或商品模式未可靠匹配。
+默认消息流程中商品ID未知是允许的，不使已确认消息失败；具体商品状态仍单独保存。
 
 保留运行日志：
 
@@ -327,5 +374,5 @@ dotnet run 2>&1 | Tee-Object -FilePath Output/run.log
 截图和原始日志保留在本地 Output，不进入 Git。
 历史实测：V0.1 [VALIDATION.md](VALIDATION.md)，V0.2 [VALIDATION_V02.md](VALIDATION_V02.md)。
 
-范围止于 V0.7 商品ID与本地测试ProductProfile映射。UIA仍仅用于几何定位，不读取消息或商品ID文本。
+范围止于 V0.8 买家消息结构化。UIA仍仅用于几何定位，不读取消息或商品ID文本。
 不包含AI接口、Knowledge V2、SalesAgent、自动回复、自动点击/发送、DLL注入、进程内存读取或qnbot集成。

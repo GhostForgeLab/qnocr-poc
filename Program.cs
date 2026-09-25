@@ -8,15 +8,29 @@ using QnocrPoc.OCR;
 using QnocrPoc.Detection;
 using QnocrPoc.Layout;
 using QnocrPoc.Product;
+using QnocrPoc.Messages;
 
 Console.OutputEncoding = Encoding.UTF8;
-Console.WriteLine("[QN OCR POC V0.7]");
+Console.WriteLine("[QN OCR POC V0.8]");
 Console.WriteLine($"Time: {DateTimeOffset.Now:O}");
 Console.WriteLine($"Runtime: {System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription}");
 var operation = "Capture";
 
 try
 {
+    if (args.Length > 0 && args[0] == "--messages")
+    {
+        if (!(args.Length == 2 || args.Length == 4 && args[2] == "--product-id" && ProductIdExtractor.IsValidProductId(args[3])))
+        {
+            Console.Error.WriteLine("Usage: dotnet run -- --messages chat_region.png [--product-id digits]");
+            return 2;
+        }
+        operation = "Buyer message structuring";
+        var ocr = RunOcrAndSave(args[1]);
+        var batch = SaveMessages(ocr, args.Length == 4 ? args[3] : "", "ExplicitCallerContextNotVerifiedMessageAssociation");
+        return batch.Messages.Count > 0 ? 0 : 3;
+    }
+
     if (args.Length > 0 && args[0] == "--product")
     {
         if (!(args.Length == 2 || args.Length == 4 && args[2] == "--profiles"))
@@ -88,7 +102,7 @@ try
         requestedHandle = (nint)handle;
     else if (args.Length != 0 && !(args.Length == 1 && args[0] is "--list" or "--layout"))
     {
-        Console.Error.WriteLine("Usage: dotnet run [-- --list | -- --layout | -- --uia-geometry | -- --hwnd 0xHEX | -- --extract screenshot.png | -- --ocr image.png | -- --product image.png [--profiles catalog.json] | -- --compare previous.png current.png | -- --watch [--frames N]]");
+        Console.Error.WriteLine("Usage: dotnet run [-- --list | -- --layout | -- --uia-geometry | -- --hwnd 0xHEX | -- --extract screenshot.png | -- --ocr image.png | -- --messages chat_region.png [--product-id digits] | -- --product image.png [--profiles catalog.json] | -- --compare previous.png current.png | -- --watch [--frames N]]");
         return 2;
     }
 
@@ -106,10 +120,11 @@ try
     if (args.Contains("--list")) return 0;
     var selected = windows.FirstOrDefault(w =>
         w.IsVisible && !w.IsMinimized && !w.IsCloaked && w.WindowBounds.Width > 0 && w.WindowBounds.Height > 0 &&
+        w.WindowTitle.Contains("接待中心", StringComparison.Ordinal) &&
         (requestedHandle is null || w.Hwnd == requestedHandle));
     if (selected is null)
     {
-        Console.Error.WriteLine("\nCapture Failed: No visible, non-minimized Qianniu window found. Show the chat window on this desktop and retry.");
+        Console.Error.WriteLine("\nCapture Failed: No visible, non-minimized Qianniu reception center found. Show the chat window on this desktop and retry.");
         return 1;
     }
     Console.WriteLine($"\nSelected HWND: 0x{selected.Hwnd:X} (prefer reception center, then largest eligible window; --hwnd overrides)");
@@ -127,9 +142,13 @@ try
     var regions = await ExtractRegions(result.SavedPath, selected);
     if (args.Contains("--layout")) return 0;
     operation = "OCR";
-    RunOcr(regions.Single(path => Path.GetFileName(path) == "chat_region.png"));
+    var chatOcr = RunOcrAndSave(regions.Single(path => Path.GetFileName(path) == "chat_region.png"));
     operation = "Product context";
-    return RunProduct(regions.Single(path => Path.GetFileName(path) == "product_region.png"));
+    var productContext = RunProductAndSave(regions.Single(path => Path.GetFileName(path) == "product_region.png"));
+    operation = "Buyer message structuring";
+    var messages = SaveMessages(chatOcr, productContext.ProductId ?? "", "SameCaptureVisibleProductNotVerifiedMessageAssociation");
+    // Product context is optional for a valid buyer message; unresolved IDs remain empty.
+    return messages.Messages.Count > 0 ? 0 : 3;
 }
 catch (Exception ex)
 {
@@ -184,6 +203,11 @@ static OcrResult RunOcrAndSave(string imagePath)
 
 static int RunProduct(string imagePath, string? catalogPath = null)
 {
+    return RunProductAndSave(imagePath, catalogPath).Status == ProductContextStatus.Matched ? 0 : 3;
+}
+
+static ProductContext RunProductAndSave(string imagePath, string? catalogPath = null)
+{
     catalogPath ??= Path.Combine(AppContext.BaseDirectory, "Product", "product-profiles.sample.json");
     var resolver = new ProductContextResolver(catalogPath);
     Console.WriteLine($"\nProduct catalog: {resolver.CatalogPath}\nTest catalog: {resolver.IsTestCatalog}");
@@ -196,5 +220,16 @@ static int RunProduct(string imagePath, string? catalogPath = null)
     var path = Path.GetFullPath(Path.Combine("Output", "Product", $"product_context_{DateTime.Now:yyyyMMdd_HHmmss_fff}.json"));
     File.WriteAllText(path, JsonSerializer.Serialize(new { ImagePath = Path.GetFullPath(imagePath), Context = context, Ocr = ocr }, options), new UTF8Encoding(false));
     Console.WriteLine($"Product context saved: {path}");
-    return context.Status == ProductContextStatus.Matched ? 0 : 3;
+    return context;
+}
+
+static BuyerMessageBatch SaveMessages(OcrResult ocr, string productId, string productBinding)
+{
+    var batch = new BuyerMessageStructurer().Structure(ocr, productId, productBinding);
+    var options = new JsonSerializerOptions { WriteIndented = true, Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
+    Directory.CreateDirectory("Output/Messages");
+    var path = Path.GetFullPath(Path.Combine("Output", "Messages", $"buyer_messages_{DateTime.Now:yyyyMMdd_HHmmss_fff}.json"));
+    File.WriteAllText(path, JsonSerializer.Serialize(batch, options), new UTF8Encoding(false));
+    Console.WriteLine($"\nBuyer Messages:\n{JsonSerializer.Serialize(batch.Messages, options)}\nReview items: {batch.ReviewItems.Count}\nMessage result saved: {path}");
+    return batch;
 }
