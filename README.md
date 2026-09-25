@@ -1,7 +1,31 @@
-# qnocr-poc V1.7
+# qnocr-poc V1.8
 
 独立的千牛视觉采集实验：窗口捕获 → 布局裁剪 → OCR → BuyerMessage → 统一MessageEnvelope。
 主程序使用 C# / .NET 8 / Windows；V1.0增加独立.NET Framework 4.8离线兼容性宿主，不修改qnbot。
+
+## V1.8 AI Provider / Model 配置层
+
+隔离宿主现在从 [Config/ai-provider.json](Config/ai-provider.json) 读取非密钥配置，经 `IAIProvider` 选择
+`OpenRouterProvider`。主 Agent 仍走原 qnbot `StreamingBuyerAnswerService` 的 Prompt、路由和回复解析；
+Provider 扩展层负责端点/模型校验和配置，独立 HTTP 冒烟由 Provider 自身处理。API Key 继续留在原隔离设置中，
+不写入配置文件、源码或普通日志。
+
+```powershell
+# 只读配置检查，支持传入另一份 JSON 验证模型字段来源
+./Validation/QnbotCompatibility/bin/Debug/net48/QnbotCompatibility.exe --ai-config-check Config/ai-provider.json
+# 切换模型前先显式应用；命令备份并回读本地隔离 qnbot 设置，不发起 AI 请求
+./Validation/QnbotCompatibility/bin/Debug/net48/QnbotCompatibility.exe --ai-provider-apply-config Config/ai-provider.json
+# 仅合成文本的独立 Provider 通信检查
+./Validation/QnbotCompatibility/bin/Debug/net48/QnbotCompatibility.exe --ai-provider-smoke Config/ai-provider.json
+```
+
+Shadow 的 `--provider-config PATH` 可选择配置文件；默认路径为 `Config/ai-provider.json`。
+更改模型字段后先运行 `--ai-provider-apply-config`，再启动 AI Shadow；模型不匹配时不会偷偷调用旧模型。
+配置可表达 `Temperature` 和 `MaxTokens`，独立 Provider 冒烟会使用它们。
+原 qnbot 生成服务仍固定 `temperature=0.15`、`max_tokens=220`；Agent 路线遇到其他值会明确拒绝，
+避免宣称未生效的参数。新增其他 Provider 需要新的实现和验证，当前仅支持 OpenRouter。
+本轮合成输入的真实调用得到 `AiCalls=1`、Reply Preview 1、SentMessages 0；
+详见 [VALIDATION_V18.md](VALIDATION_V18.md)。
 
 ## V1.7 人工确认发送闭环（隔离验收）
 
