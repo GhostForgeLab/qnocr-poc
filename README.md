@@ -1,7 +1,29 @@
-# qnocr-poc V1.6
+# qnocr-poc V1.7
 
 独立的千牛视觉采集实验：窗口捕获 → 布局裁剪 → OCR → BuyerMessage → 统一MessageEnvelope。
 主程序使用 C# / .NET 8 / Windows；V1.0增加独立.NET Framework 4.8离线兼容性宿主，不修改qnbot。
+
+## V1.7 人工确认发送闭环（隔离验收）
+
+AI 预览仍以 `SendStatus=Shadow` 落盘，同时新增独立的投递状态：`Created` → `WaitingConfirmation`
+→ `Confirmed` → `Sending` → `Sent` / `Failed`，也可从等待状态转为 `Cancelled`。
+默认 `--shadow` 仍为 AI OFF、Send OFF；显示预览不会触发发送。
+
+```powershell
+dotnet run -- --preview <ReplyPreviewId> --state-dir <StateDirectory>
+# 审阅上一步输出的回复和 ReplySha256 后，隔离测试才运行：
+dotnet run -- --confirm-send <ReplyPreviewId> --state-dir <StateDirectory> --operator <OperatorId> --reply-sha256 <ReplySha256> --adapter isolated
+dotnet run -- --cancel-preview <ReplyPreviewId> --state-dir <StateDirectory> --operator <OperatorId>
+```
+
+当前 CLI **只提供 isolated 适配器**：它把发送请求记录在本地，`ActualSent=false`，不会向 qnbot 或千牛投递。
+`QnbotSendAdapter` 是留给未来已验证平台身份宿主注入的扩展端口；OCR 隔离测试 BuyerId 会被拒绝，
+当前没有从 CLI 启用真实发送的路径。`--operator` 为操作者自报标签，日志另记录执行命令的系统用户；
+它不是身份认证。确认必须带与预览正文一致的 SHA-256，重复确认、取消、文本改动和失败均不会自动重发。
+
+本轮把 V1.6 真实预览复制到独立目录，执行一次显式隔离确认；原预览与持久状态不变。
+确认前无 Send Request，确认后得到 `IsolatedRecorded`，重复确认被拦截，真实 `SentMessages=0`。
+证据与边界见 [VALIDATION_V17.md](VALIDATION_V17.md)。
 
 ## V1.6 真实 AI Shadow 验收
 
