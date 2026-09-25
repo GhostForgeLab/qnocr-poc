@@ -14,6 +14,7 @@ namespace CompatibilityHost
 {
     internal static class Program
     {
+        private const string DefaultProviderConfig = "Config/ai-provider.json";
         private static readonly JavaScriptSerializer Json = new JavaScriptSerializer { MaxJsonLength = 8 * 1024 * 1024 };
         private static int Main(string[] args)
         {
@@ -27,11 +28,65 @@ namespace CompatibilityHost
                 Console.WriteLine(Json.Serialize(AiShadowRuntime.ConfigureOpenRouter(args[1])));
                 return 0;
             }
-            if (args.Length == 1 && args[0] == "--ai-provider-smoke")
-                return await new AiShadowRuntime().TestProviderAsync();
-            if (args.Length == 1 && args[0] == "--ai-preflight") { Console.WriteLine(Json.Serialize(new AiShadowRuntime().Preflight())); return 0; }
+            if (args.Length == 2 && args[0] == "--ai-config-check")
+            {
+                var config = AIProviderConfig.Load(args[1]);
+                Console.WriteLine(Json.Serialize(new { Mode = "AiProviderConfigCheck", Source = Path.GetFullPath(args[1]),
+                    config.ProviderName, config.Endpoint, config.Model, config.Temperature, config.MaxTokens, config.Enabled,
+                    ApiKeyIncluded = false, SendEnabled = false }));
+                return 0;
+            }
+            if (args.Length == 2 && args[0] == "--ai-secret-audit")
+            {
+                var key = new AiShadowRuntime().GetStoredOpenRouterKey();
+                var files = Directory.EnumerateFiles(Path.GetFullPath(args[1]), "*", SearchOption.AllDirectories)
+                    .Where(p => new[] { ".json", ".jsonl", ".log", ".txt" }.Contains(Path.GetExtension(p), StringComparer.OrdinalIgnoreCase))
+                    .ToArray();
+                var exposed = files.Any(p => File.ReadAllText(p).Contains(key));
+                Console.WriteLine(Json.Serialize(new { Mode = "AiSecretAudit", CheckedFiles = files.Length,
+                    SecretPresent = exposed, KeyPrinted = false }));
+                return exposed ? 3 : 0;
+            }
+            if (args.Length == 2 && args[0] == "--ai-provider-apply-config")
+            {
+                var config = AIProviderConfig.Load(args[1]);
+                if (!config.Enabled || config.Temperature != 0.15 || config.MaxTokens != 220)
+                    throw new NotSupportedException("Current qnbot generation path requires enabled provider, temperature=0.15 and max_tokens=220.");
+                var backup = AiShadowRuntime.BackupProviderSettings();
+                var runtime = new AiShadowRuntime();
+                var provider = AIProviderFactory.Create(config, runtime);
+                runtime.ApplyOpenRouterModel(config.Model);
+                provider.PrepareAgentPipeline();
+                Console.WriteLine(Json.Serialize(new { Mode = "AiProviderApplyConfig", Source = Path.GetFullPath(args[1]),
+                    config.ProviderName, config.Endpoint, config.Model, Backup = backup, Active = runtime.Preflight(),
+                    ApiKeyPrinted = false, SendEnabled = false }));
+                return 0;
+            }
+            if ((args.Length == 1 || args.Length == 2) && args[0] == "--ai-provider-smoke")
+            {
+                var config = AIProviderConfig.Load(args.Length == 2 ? args[1] : DefaultProviderConfig);
+                var smokeResult = await AIProviderFactory.Create(config, new AiShadowRuntime()).SmokeAsync("Reply with exactly OPENROUTER_OK.");
+                Console.WriteLine(Json.Serialize(new { Mode = "AiProviderSmoke", smokeResult.ProviderName, smokeResult.Endpoint,
+                    BaseUrl = smokeResult.Endpoint, smokeResult.Model, smokeResult.Temperature, smokeResult.MaxTokens,
+                    smokeResult.HttpStatus, smokeResult.Success, smokeResult.Content,
+                    AiEnabled = true, smokeResult.SendEnabled, smokeResult.SentMessages, SendEntryInvoked = false }));
+                return smokeResult.Success ? 0 : 3;
+            }
+            if (args.Length == 1 && args[0] == "--ai-preflight")
+            {
+                Console.WriteLine(Json.Serialize(new AiShadowRuntime().Preflight()));
+                return 0;
+            }
+            if (args.Length == 2 && args[0] == "--ai-preflight")
+            {
+                var config = AIProviderConfig.Load(args[1]);
+                Console.WriteLine(Json.Serialize(new { Mode = "AiShadowPreflight", Config = config,
+                    Runtime = new AiShadowRuntime().Preflight(), SendEnabled = false }));
+                return 0;
+            }
             if (args.Length == 4 && args[0] == "--ai-shadow") return await RunAiShadowAsync(args[1], args[2], args[3]);
             if (args.Length == 5 && args[0] == "--ai-shadow") return await RunAiShadowAsync(args[1], args[2], args[3], args[4]);
+            if (args.Length == 6 && args[0] == "--ai-shadow") return await RunAiShadowAsync(args[1], args[2], args[3], args[4], args[5]);
             if (args.Length == 4 && args[0] == "--agent-context-check") return await RunAgentContextCheckAsync(args[1], args[2], args[3]);
             if (args.Length == 4 && args[0] == "--dispatch-shadow") return await RunDispatchShadowAsync(args[1], args[2], args[3]);
             if (args.Length == 4 && args[0] == "--shadow-convert") return RunShadowConversion(args[1], args[2], args[3]);
@@ -127,7 +182,8 @@ namespace CompatibilityHost
             return 0;
         }
 
-        private static async Task<int> RunAiShadowAsync(string envelopePath, string identityPath, string output, string contextPath = null)
+        private static async Task<int> RunAiShadowAsync(string envelopePath, string identityPath, string output,
+            string contextPath = null, string configPath = null)
         {
             var manifest = VerifySourceSnapshot();
             var envelope = Json.Deserialize<MessageEnvelope>(File.ReadAllText(envelopePath));
@@ -151,6 +207,9 @@ namespace CompatibilityHost
             }
             Directory.CreateDirectory(output);
             var ai = new AiShadowRuntime();
+            var providerConfig = AIProviderConfig.Load(configPath ?? DefaultProviderConfig);
+            var provider = AIProviderFactory.Create(providerConfig, ai);
+            provider.PrepareAgentPipeline();
             var before = ai.AiCalls;
             var completion = new TaskCompletionSource<string>();
             var timer = System.Diagnostics.Stopwatch.StartNew();
@@ -176,7 +235,7 @@ namespace CompatibilityHost
                             PromptLength = promptLength, PromptLengthScope = "QnbotModelQuestionArgument", Timestamp = aiRequestAt,
                             AiRequestId = context == null ? null : context.AiRequestId, SendEnabled = false }));
                         await ai.ObserveAsync(identity.SellerNick, identity.BuyerNick, modelQuestion, envelope.ProductId, deadline.Token);
-                        var answer = await ai.GenerateAsync(identity.SellerNick, identity.BuyerNick, modelQuestion, deadline.Token);
+                        var answer = await provider.GenerateAsync(identity.SellerNick, identity.BuyerNick, modelQuestion, deadline.Token);
                         completion.TrySetResult(answer);
                     }
                     catch (Exception ex) { completion.TrySetException(ex); }
@@ -197,6 +256,8 @@ namespace CompatibilityHost
                 {
                     Mode = "AiShadowPreviewOnly", Status = failure == null ? "Converted" : failure.Contains("Empty AI result") ? "EmptyReply" : "AiFailed", Reason = failure,
                     AiEnabled = true, SendEnabled = false, AiInvoked = calls > 0, AiCalls = calls, LastAiError = ai.LastAiError,
+                    ProviderName = providerConfig.ProviderName, ProviderEndpoint = providerConfig.Endpoint,
+                    ProviderModel = providerConfig.Model, ProviderConfigSource = Path.GetFullPath(configPath ?? DefaultProviderConfig),
                     ReplySuggestion = failure == null ? reply : null, ConvertedMessages = failure == null ? envelope.Messages.Count : 0,
                     SessionId = context == null ? null : context.SessionId, AiRequestId = context == null ? null : context.AiRequestId,
                     ContextMessageCount = context == null ? envelope.Messages.Count : context.Messages.Count,

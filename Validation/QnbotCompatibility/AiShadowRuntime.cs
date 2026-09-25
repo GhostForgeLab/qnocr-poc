@@ -78,11 +78,6 @@ namespace CompatibilityHost
         private static string SafeHost(string url) { Uri parsed; return Uri.TryCreate(url, UriKind.Absolute, out parsed) ? parsed.Host : "Invalid"; }
         public async Task<string> GenerateAsync(string seller, string buyer, string question, CancellationToken token)
         {
-            foreach (var endpoint in (IEnumerable)Call("Bot.ChromeNs.AiEndpointStore", "GetEnabledEndpoints"))
-            {
-                var url = (string)endpoint.GetType().GetProperty("BaseUrl").GetValue(endpoint, null);
-                RequireOpenRouter(url);
-            }
             if ((bool)Call("Bot.Params+Robot", "GetIsAutoReply")) throw new InvalidOperationException("Send must remain OFF.");
             var rules = Call("Bot.ChromeNs.BotFeatureStore", "GetAutoReplyRules");
             if ((bool)rules.GetType().GetProperty("EnableHandoffNotification").GetValue(rules, null)) throw new InvalidOperationException("Notifications must remain OFF.");

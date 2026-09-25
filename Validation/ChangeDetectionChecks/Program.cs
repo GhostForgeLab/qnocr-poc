@@ -2,6 +2,9 @@ using System.Drawing;
 using System.Drawing.Imaging;
 using QnocrPoc.Detection;
 
+if (args.Length == 2 && args[0] == "--provider-live-smoke")
+    return await ProviderLiveSmoke.RunAsync(args[1]);
+
 var root = Path.GetFullPath(Path.Combine("Output", "ValidationV04"));
 Directory.CreateDirectory(root);
 var passed = 0;
@@ -111,4 +114,5 @@ await AiShadowChecks.RunAsync(Check);
 await StabilizationChecks.RunAsync(Check);
 await AgentPipelineChecks.RunAsync(Check);
 await ConfirmationChecks.RunAsync(Check);
-Console.WriteLine($"Passed {passed} checks (V0.4 through V1.7). Fixtures: {root}");
+Console.WriteLine($"Passed {passed} checks (V0.4 through V1.8). Fixtures: {root}");
+return 0;

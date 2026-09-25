@@ -1,0 +1,8 @@
+{
+  "ProviderName": "OpenRouter",
+  "Endpoint": "https://openrouter.ai/api/v1",
+  "Model": "openai/gpt-5.5",
+  "Temperature": 0.15,
+  "MaxTokens": 220,
+  "Enabled": true
+}

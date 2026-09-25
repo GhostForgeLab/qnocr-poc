@@ -1,9 +1,9 @@
 namespace QnocrPoc.Shadow;
 
 /// <summary>Reads the durable context beside the original one-message envelope.</summary>
-public sealed class AgentShadowClient
+public sealed class AgentShadowClient(string? providerConfigPath = null)
 {
-    private readonly ShadowAdapterClient _client = new(aiShadow: true);
+    private readonly ShadowAdapterClient _client = new(aiShadow: true, aiProviderConfigPath: providerConfigPath);
     public Task<ShadowAdapterResult> ConvertAsync(string envelopePath, string? identityPath, string outputDirectory, CancellationToken token)
     {
         if (!File.Exists(Path.Combine(Path.GetDirectoryName(Path.GetFullPath(envelopePath))!, "context.json")))

@@ -31,7 +31,7 @@ if (args.Length == 3 && args[0] == "--ocr-worker")
 }
 
 Console.OutputEncoding = Encoding.UTF8;
-Console.WriteLine("[QN OCR POC V1.7]");
+Console.WriteLine("[QN OCR POC V1.8]");
 Console.WriteLine($"Time: {DateTimeOffset.Now:O}");
 Console.WriteLine($"Runtime: {System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription}");
 var operation = "Capture";
@@ -53,6 +53,7 @@ try
         double? minutes = null;
         string? stateDirectory = null;
         string? aiSession = null;
+        string? providerConfig = null;
         var seen = new HashSet<string>(StringComparer.Ordinal);
         for (var i = 1; i < args.Length; i++)
         {
@@ -65,6 +66,7 @@ try
             else if (args[i] == "--minutes" && double.TryParse(args[i + 1], out var duration) && double.IsFinite(duration) && duration > 0) minutes = duration;
             else if (args[i] == "--state-dir" && !string.IsNullOrWhiteSpace(args[i + 1])) stateDirectory = args[i + 1];
             else if (args[i] == "--ai-session" && !string.IsNullOrWhiteSpace(args[i + 1])) aiSession = args[i + 1];
+            else if (args[i] == "--provider-config" && !string.IsNullOrWhiteSpace(args[i + 1])) providerConfig = args[i + 1];
             else { Console.Error.WriteLine("Invalid shadow option/value."); return 2; }
             i++;
         }
@@ -74,7 +76,7 @@ try
         Console.CancelKeyPress += handler;
         try
         {
-            var summary = await new QnocrShadowRunner().RunAsync(new(frames, interval, identity, aiShadow, minutes, stateDirectory, aiSession), cancellation.Token);
+            var summary = await new QnocrShadowRunner().RunAsync(new(frames, interval, identity, aiShadow, minutes, stateDirectory, aiSession, providerConfig), cancellation.Token);
             return summary.Status is "Completed" or "Cancelled" or "StoppedByRequest" ? 0 : 3;
         }
         finally { Console.CancelKeyPress -= handler; }

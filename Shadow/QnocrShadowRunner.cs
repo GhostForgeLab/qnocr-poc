@@ -11,7 +11,8 @@ using QnocrPoc.Product;
 namespace QnocrPoc.Shadow;
 
 public sealed record ShadowRunOptions(int? MaximumFrames = null, int IntervalMilliseconds = 1000, string? IdentityMappingPath = null,
-    bool AiShadow = false, double? MaximumMinutes = null, string? StateDirectory = null, string? AiSessionId = null);
+    bool AiShadow = false, double? MaximumMinutes = null, string? StateDirectory = null, string? AiSessionId = null,
+    string? AiProviderConfigPath = null);
 public sealed record ShadowRunSummary(string Status, int Attempts, int SuccessfulFrames, int FailedFrames,
     int ProductOcrCalls, int ChatOcrCalls, int Envelopes, int ConvertedEnvelopes, int DeferredEnvelopes, string SessionDirectory,
     int NewMessages, int BaselineMessages, int DuplicateObservations, int HistoricalObservations, int ConvertedMessages,
@@ -65,7 +66,7 @@ public sealed class QnocrShadowRunner
         var detector = new ChatRegionChangeDetector(); var extractor = new QianniuRegionExtractor(); var structurer = new BuyerMessageStructurer();
         using var dispatch = new DurableShadowDispatch(stateRoot, Path.Combine(run, "lifecycle.jsonl"), token,
             _adapt ?? (options.AiShadow
-                ? new AgentShadowClient().ConvertAsync
+                ? new AgentShadowClient(options.AiProviderConfigPath).ConvertAsync
                 : new ShadowAdapterClient(dispatch: true).ConvertAsync), options.AiShadow, agentTrace);
         dispatch.Start();
         var watch = Stopwatch.StartNew(); var nextHeartbeat = TimeSpan.Zero;
@@ -75,10 +76,11 @@ public sealed class QnocrShadowRunner
         var runIds = new HashSet<string>(StringComparer.Ordinal); var sessionIds = new HashSet<string>(StringComparer.Ordinal);
         var outOfScopeMessages = 0;
         var status = "Completed";
-        AtomicJson.Write(Path.Combine(run, "session.json"), new { Version = "1.7", StartedAt = DateTimeOffset.Now, StateDirectory = stateRoot,
+        AtomicJson.Write(Path.Combine(run, "session.json"), new { Version = "1.8", StartedAt = DateTimeOffset.Now, StateDirectory = stateRoot,
             options.MaximumFrames, options.MaximumMinutes, AiEnabled = options.AiShadow, SendEnabled = false,
-            AllowedAiSession = allowedAiSession, Identity = "Per-buyer OCR label sessions; test identities are isolated, no platform identity inference" });
-        Console.WriteLine($"[SHADOW V1.7] Session: {run}\nState: {stateRoot}\nAI={(options.AiShadow ? "ON" : "OFF")}; Send=OFF; first buyer snapshot is baseline. stop.request stops cleanly.");
+            AllowedAiSession = allowedAiSession, ProviderConfig = options.AiProviderConfigPath ?? "Config/ai-provider.json",
+            Identity = "Per-buyer OCR label sessions; test identities are isolated, no platform identity inference" });
+        Console.WriteLine($"[SHADOW V1.8] Session: {run}\nState: {stateRoot}\nAI={(options.AiShadow ? "ON" : "OFF")}; Send=OFF; first buyer snapshot is baseline. stop.request stops cleanly.");
         Console.WriteLine($"[Shadow Flags] AI_ENABLED={options.AiShadow.ToString().ToLowerInvariant()} SEND_ENABLED=false");
         try
         {

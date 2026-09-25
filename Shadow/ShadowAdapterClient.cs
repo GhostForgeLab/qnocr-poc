@@ -8,7 +8,7 @@ public sealed record ShadowAdapterResult(string Status, int ConvertedMessages, s
     int AiCalls = 0);
 
 /// <summary>Calls only the isolated conversion-only host. Never attaches to a running Bot process.</summary>
-public sealed class ShadowAdapterClient(bool aiShadow = false, bool dispatch = false)
+public sealed class ShadowAdapterClient(bool aiShadow = false, bool dispatch = false, string? aiProviderConfigPath = null)
 {
     public async Task<ShadowAdapterResult> ConvertAsync(string envelopePath, string? identityPath, string outputDirectory, CancellationToken token)
     {
@@ -24,7 +24,11 @@ public sealed class ShadowAdapterClient(bool aiShadow = false, bool dispatch = f
         if (aiShadow)
         {
             var contextPath = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(envelopePath))!, "context.json");
-            if (File.Exists(contextPath)) start.ArgumentList.Add(contextPath);
+            if (File.Exists(contextPath))
+            {
+                start.ArgumentList.Add(contextPath);
+                start.ArgumentList.Add(Path.GetFullPath(aiProviderConfigPath ?? Path.Combine("Config", "ai-provider.json")));
+            }
         }
         Process? child;
         try { child = Process.Start(start); }
