@@ -1,7 +1,60 @@
-# qnocr-poc V1.0
+# qnocr-poc V1.1
 
 独立的千牛视觉采集实验：窗口捕获 → 布局裁剪 → OCR → BuyerMessage → 统一MessageEnvelope。
 主程序使用 C# / .NET 8 / Windows；V1.0增加独立.NET Framework 4.8离线兼容性宿主，不修改qnbot。
+
+## V1.1 真实千牛 OCR Shadow
+
+`Shadow/QnocrShadowRunner.cs` 串联实时截图、布局解析、商品OCR、聊天变化检测、聊天OCR、
+保守消息结构化和MessageEnvelope。`ShadowAdapterClient` 通过JSON文件调用隔离.NET4.8宿主的
+`--shadow-convert` 分支，复用 `Integration/QnocrMessageAdapter` 转成真实qnbot消息类型并保存日志。
+这个分支不创建Coordinator，不执行回调，不连接运行中的Bot；不调用AI回复、SalesAgent、Send。
+
+首次在项目根目录准备宿主（需要.NET Framework 4.8 Developer Pack；基线校验仍沿用V1.0）：
+
+```powershell
+./Validation/QnbotCompatibility/Prepare-QnbotSource.ps1 -QnbotRoot D:/CodexWork/qnagent/qnbot
+dotnet build Validation/QnbotCompatibility/QnbotCompatibility.csproj
+```
+
+展开接待中心后运行：
+
+```powershell
+# 连续观察，Ctrl+C停止；未知身份为空，产生的Envelope会被转换器拒绝并记录
+dotnet run -- --shadow
+
+# 本轮授权的隔离联调：显式测试映射，仅运行3帧
+dotnet run -- --shadow --frames 3 --identity Validation/QnbotCompatibility/identity_mapping.json
+
+# 调整处理完一帧之后的等待时间；100..60000毫秒，默认1000
+dotnet run -- --shadow --frames 10 --interval-ms 2000 --identity Validation/QnbotCompatibility/identity_mapping.json
+```
+
+- 首帧输出 `BaselineSnapshot` 历史快照；后续聊天像素变化输出 `ChangedSnapshot`，聊天边界/窗口尺寸变化输出 `LayoutResetSnapshot`。
+  所有快照均明确 `IsNewMessage=false`，尚未完成新消息确认、跨快照去重或买家切换识别。
+- 变化触发**完整聊天区域**OCR，保留昵称、完整时间和气泡证据；静止帧不重复聊天OCR。
+  商品裁剪PNG哈希及区域边界完全相同则复用商品OCR，日志保留证据帧编号；否则重新识别。
+- 只输出保守规则确认的买家消息，ReviewItems仅留档；未知商品ID为空，当前可见商品不代表每条消息的真实商品关联。
+- 不提供身份时不猜测；显式映射固定于本次会话，并保存快照。测试映射标记 `IsTestIdentity=true`；
+  即便手工提供非测试映射，也未自动验证其与当前聊天买家的关系，不能作为生产路由依据。
+- 绑定启动时选定的接待中心窗口，不自动切换窗口。普通帧失败会清除基线/商品缓存后重试；帧数上限包含失败尝试。
+  PrintWindow超时立即结束Shadow，防止堆积阻塞的原生线程；Ctrl+C在当前同步OCR/截图操作返回后停止。
+- 转换宿主缺失、超时或拒绝会记录明确状态，无真实Bot降级路径。只有 `Converted` 回执计入转换成功。
+  程序退出码：0=循环完成或用户取消，3=帧失败/转换未完成/捕获超时，1=启动或致命错误，2=参数错误。
+  完成循环不意味着必有消息或商品ID，必须查看摘要计数。
+
+输出为独立 `Output/Shadow/shadow_*`：`session.json`、逐帧 `shadow.jsonl`、结束 `summary.json`；
+发生OCR的 `frame_*` 目录保留原图、四个裁剪、布局、OCR、消息、Envelope，以及 `adapter_*/qnbot-messages.json`
+和 `shadow-adapter-result.json`。回执验证六份固定qnbot源码，记录零业务调用、零运行时初始化和 `CoordinatorCreated=false`。
+原生对象的旁路包装仍保留V1.0 `OfflineCompatibilityOnly` 标签；本轮执行模式由回执 `ShadowConversionOnly` 标识。
+静止帧只保留最近两个scratch裁剪槽；事件图片和日志持续追加，长时间观察会增加本地磁盘用量。
+截图、身份映射快照和原始消息只保存在被Git忽略的Output，验收见 [VALIDATION_V11.md](VALIDATION_V11.md)。
+
+回归检查（先完成上面的宿主准备/构建）：
+
+```powershell
+dotnet run --project Validation/ChangeDetectionChecks/ChangeDetectionChecks.csproj
+```
 
 ## V1.0 qnbot兼容性验证
 
@@ -479,5 +532,5 @@ dotnet run 2>&1 | Tee-Object -FilePath Output/run.log
 截图和原始日志保留在本地 Output，不进入 Git。
 历史实测：V0.1 [VALIDATION.md](VALIDATION.md)，V0.2 [VALIDATION_V02.md](VALIDATION_V02.md)。
 
-范围止于 V1.0 qnbot离线兼容性PoC。UIA仍仅用于几何定位，不读取消息或商品ID文本。
-未修改qnbot核心业务，未启用真实Shadow、AI回复或发送，也未接入真实消息传输。
+范围止于 V1.1 真实千牛OCR到隔离Adapter日志。UIA仍仅用于几何定位，不读取消息或商品ID文本。
+未修改qnbot核心业务；未连接运行中的qnbot，未启用AI回复或发送。

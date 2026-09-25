@@ -21,6 +21,7 @@ namespace CompatibilityHost
         }
         private static async Task<int> RunAsync(string[] args)
         {
+            if (args.Length == 4 && args[0] == "--shadow-convert") return RunShadowConversion(args[1], args[2], args[3]);
             if (args.Length != 3) { Console.Error.WriteLine("Usage: QnbotCompatibility.exe envelope.json identity_mapping.json output-directory"); return 2; }
             var manifest = VerifySourceSnapshot();
             var envelope = Json.Deserialize<MessageEnvelope>(File.ReadAllText(args[0]));
@@ -77,6 +78,43 @@ namespace CompatibilityHost
             File.WriteAllText(Path.Combine(args[2], "compatibility-result.json"), Json.Serialize(result));
             Console.WriteLine(Json.Serialize(result));
             coordinator.CancelBuyer(identity.SellerNick, identity.BuyerNick, "offline_test_complete");
+            return 0;
+        }
+
+        private static int RunShadowConversion(string envelopePath, string identityPath, string output)
+        {
+            var manifest = VerifySourceSnapshot();
+            var envelope = Json.Deserialize<MessageEnvelope>(File.ReadAllText(envelopePath));
+            var identity = identityPath == "-" ? null : Json.Deserialize<QnbotIdentityMapping>(File.ReadAllText(identityPath));
+            Directory.CreateDirectory(output);
+            string status;
+            string reason = null;
+            int count = 0;
+            try
+            {
+                // Pure conversion only: do not construct a coordinator, run safety policy, or invoke a callback.
+                var items = new QnocrMessageAdapter().Convert(envelope, identity,
+                    TimeZoneInfo.FindSystemTimeZoneById("China Standard Time"), DateTime.Now, "qnocr-shadow-v11");
+                File.WriteAllText(Path.Combine(output, "qnbot-messages.json"), Json.Serialize(items.Select(item => item.BurstItem.Message).ToArray()));
+                File.WriteAllText(Path.Combine(output, "converted-messages.json"), Json.Serialize(items));
+                count = items.Count;
+                status = "Converted";
+            }
+            catch (InvalidDataException ex) { status = "Rejected"; reason = ex.Message; }
+            if (Guard.ForbiddenCalls != 0 || Guard.SuppressedInitializers != 0)
+                throw new InvalidOperationException("Unexpected runtime/business initialization in conversion-only mode.");
+            var receipt = new
+            {
+                Mode = "ShadowConversionOnly", Status = status, Reason = reason,
+                ConvertedMessages = count, CoordinatorCreated = false,
+                ForbiddenBusinessCalls = Guard.ForbiddenCalls, RuntimeInitializers = Guard.SuppressedInitializers,
+                IsTestIdentity = identity != null && identity.IsTestMapping,
+                IdentityBinding = "OperatorProvided; current conversation identity not automatically verified",
+                DisplayTimeZone = "China Standard Time", QnbotBaselineCommit = manifest.QnbotCommit,
+                SourceFilesVerified = manifest.Sources.Length
+            };
+            File.WriteAllText(Path.Combine(output, "shadow-adapter-result.json"), Json.Serialize(receipt));
+            Console.WriteLine(Json.Serialize(receipt));
             return 0;
         }
 

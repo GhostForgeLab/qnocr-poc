@@ -65,7 +65,7 @@ public sealed class QianniuWindowCapture
         }
         catch (TimeoutException)
         {
-            return new(false, null, Method, "PrintWindow timed out after 15 seconds. No verified capture.");
+            return new(false, null, Method, "PrintWindow timed out after 15 seconds. No verified capture.", TimedOut: true);
         }
     }
 

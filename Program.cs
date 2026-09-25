@@ -10,15 +10,43 @@ using QnocrPoc.Layout;
 using QnocrPoc.Product;
 using QnocrPoc.Messages;
 using QnocrPoc.Adapter;
+using QnocrPoc.Shadow;
 
 Console.OutputEncoding = Encoding.UTF8;
-Console.WriteLine("[QN OCR POC V1.0]");
+Console.WriteLine("[QN OCR POC V1.1]");
 Console.WriteLine($"Time: {DateTimeOffset.Now:O}");
 Console.WriteLine($"Runtime: {System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription}");
 var operation = "Capture";
 
 try
 {
+    if (args.Length > 0 && args[0] == "--shadow")
+    {
+        int? frames = null;
+        var interval = 1000;
+        string? identity = null;
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        if (args.Length % 2 != 1) { Console.Error.WriteLine("Usage: --shadow [--frames N] [--interval-ms N] [--identity mapping.json]"); return 2; }
+        for (var i = 1; i < args.Length; i += 2)
+        {
+            if (!seen.Add(args[i])) { Console.Error.WriteLine("Duplicate shadow option."); return 2; }
+            if (args[i] == "--frames" && int.TryParse(args[i + 1], out var n) && n > 0) frames = n;
+            else if (args[i] == "--interval-ms" && int.TryParse(args[i + 1], out var ms) && ms is >= 100 and <= 60000) interval = ms;
+            else if (args[i] == "--identity" && !string.IsNullOrWhiteSpace(args[i + 1])) identity = args[i + 1];
+            else { Console.Error.WriteLine("Invalid shadow option/value."); return 2; }
+        }
+        operation = "Shadow";
+        using var cancellation = new CancellationTokenSource();
+        ConsoleCancelEventHandler handler = (_, e) => { e.Cancel = true; cancellation.Cancel(); };
+        Console.CancelKeyPress += handler;
+        try
+        {
+            var summary = await new QnocrShadowRunner().RunAsync(new(frames, interval, identity), cancellation.Token);
+            return summary.Status is "Completed" or "Cancelled" ? 0 : 3;
+        }
+        finally { Console.CancelKeyPress -= handler; }
+    }
+
     if (args.Length > 0 && args[0] == "--adapt")
     {
         var ids = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -129,7 +157,7 @@ try
         requestedHandle = (nint)handle;
     else if (args.Length != 0 && !(args.Length == 1 && args[0] is "--list" or "--layout"))
     {
-        Console.Error.WriteLine("Usage: dotnet run [-- --adapt buyer_messages.json [--seller-id ID] [--buyer-id ID] | -- --list | -- --layout | -- --uia-geometry | -- --hwnd 0xHEX | -- --extract screenshot.png | -- --ocr image.png | -- --messages chat_region.png [--product-id digits] | -- --product image.png [--profiles catalog.json] | -- --compare previous.png current.png | -- --watch [--frames N]]");
+        Console.Error.WriteLine("Usage: dotnet run [-- --shadow [--frames N] [--interval-ms N] [--identity mapping.json] | -- --adapt buyer_messages.json [--seller-id ID] [--buyer-id ID] | -- --list | -- --layout | -- --uia-geometry | -- --hwnd 0xHEX | -- --extract screenshot.png | -- --ocr image.png | -- --messages chat_region.png [--product-id digits] | -- --product image.png [--profiles catalog.json] | -- --compare previous.png current.png | -- --watch [--frames N]]");
         return 2;
     }
 
