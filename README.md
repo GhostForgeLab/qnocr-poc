@@ -1,7 +1,22 @@
-# qnocr-poc V1.4
+# qnocr-poc V1.5
 
 独立的千牛视觉采集实验：窗口捕获 → 布局裁剪 → OCR → BuyerMessage → 统一MessageEnvelope。
 主程序使用 C# / .NET 8 / Windows；V1.0增加独立.NET Framework 4.8离线兼容性宿主，不修改qnbot。
+
+## V1.5 Agent Pipeline Shadow（本地链路已验证，真实 AI 验收待续）
+
+外层 `SessionContextView` 保留同一买家的确认消息及当前消息，最多取最近 10 条作为模型输入视图。
+原 `MessageEnvelope` 仍只载当前一条新消息进入 Adapter 和原 qnbot `BuyerMessageBurstCoordinator`；
+隔离宿主在协调器回调处把同会话历史附加到模型问题文本，不把历史重放成新的协调器事件。
+模型输入附加的是中性会话上下文，没有建设知识库或改动现有业务 Prompt。
+
+`ReplyPreview` 保存输入、回复、未知（`null`）置信度和固定的 `SendStatus=Shadow`。
+`agent-pipeline.jsonl` 用 CaptureId、SessionId、AiRequestId、ReplyPreviewId 串联捕获、会话、AI 请求、AI 响应和预览；
+AI 请求记录问题长度但不记录 API Key。AI 失败、空回复和无法绑定会话分别记录。
+宿主继续强制 Send OFF；AI 模式额外要求显式 `--ai-session <64位SessionId>`，只允许该测试会话进入 AI。
+
+本轮用户明确要求暂不进行外部 AI 调用，因此没有运行 `--ai-shadow`、没有向第三方发送会话内容，
+也没有要求买家发送 V1.5 的 10 条问题。已完成的本地检查、限制及后续验收步骤见 [VALIDATION_V15.md](VALIDATION_V15.md)。
 
 ## V1.4 输入稳定化
 
