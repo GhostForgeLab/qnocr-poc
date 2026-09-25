@@ -1,7 +1,18 @@
-# qnocr-poc V1.5
+# qnocr-poc V1.6
 
 独立的千牛视觉采集实验：窗口捕获 → 布局裁剪 → OCR → BuyerMessage → 统一MessageEnvelope。
 主程序使用 C# / .NET 8 / Windows；V1.0增加独立.NET Framework 4.8离线兼容性宿主，不修改qnbot。
+
+## V1.6 真实 AI Shadow 验收
+
+在交互式 Windows 用户会话，针对指定测试 `--ai-session` 运行真实千牛 OCR → Session Context →
+原 qnbot Adapter/Coordinator/生成服务 → 本地 Reply Preview。运行日志明确显示 `AI_ENABLED=true SEND_ENABLED=false`；
+实际发送入口保持关闭。隔离宿主只允许测试身份，其他买家 Session 不调用 AI。
+
+本轮 1 条真实目标买家新消息得到 1 次 AI 调用及 1 份预览，发送 0；另一买家会话短暂出现并被 Session 范围阻止。
+回复预览与审计事件新增 `AiResponseId`，可从 CaptureId 追踪到 ReplyPreviewId。
+V1.6 的截图、OCR、请求及回执位于本机 `Output`（不提交买家原文）；详见 [VALIDATION_V16.md](VALIDATION_V16.md)。
+商品 ID 仅作外部采集元数据，现有生成服务没有已核实的商品资料绑定；不能据此声称回答有商品知识依据。
 
 ## V1.5 Agent Pipeline Shadow（本地链路已验证，真实 AI 验收待续）
 
