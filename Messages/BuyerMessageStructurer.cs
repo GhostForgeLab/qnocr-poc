@@ -99,7 +99,9 @@ public sealed class BuyerMessageStructurer
                 !TimestampPattern.IsMatch(NormalizeWidth(name.Text)) && IsGrayHeader(name.Bounds, image) &&
                 !bubbles.Any(bounds => BelongsTo(name.Bounds, bounds)) &&
                 Math.Abs(name.Bounds.X - bubble.Left) <= image.Width * .06 &&
-                name.Bounds.X + (long)name.Bounds.Width <= line.Bounds.X + 3 &&
+                // OCR's rotated bounding rectangles can overlap although the header glyphs do not.
+                // Permit at most half a line height; keep the same-row, gray, unique-name checks.
+                name.Bounds.X + (long)name.Bounds.Width <= line.Bounds.X + Math.Max(3, Math.Max(name.Bounds.Height, line.Bounds.Height) * .5) &&
                 line.Bounds.X - (name.Bounds.X + (long)name.Bounds.Width) <= Math.Max(name.Bounds.Height, line.Bounds.Height) * 2L &&
                 Math.Abs(name.Bounds.Y + name.Bounds.Height / 2d - line.Bounds.Y - line.Bounds.Height / 2d) <= Math.Max(name.Bounds.Height, line.Bounds.Height) * .5).ToArray();
             if (names.Length == 1) candidates.Add((time, [names[0], line], (int)bottom));

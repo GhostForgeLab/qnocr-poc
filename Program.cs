@@ -12,8 +12,26 @@ using QnocrPoc.Messages;
 using QnocrPoc.Adapter;
 using QnocrPoc.Shadow;
 
+// Owned one-shot native workers: parent kills only these helpers on timeout. No UI/send action.
+if (args.Length == 4 && args[0] == "--capture-worker")
+{
+    var hwnd = (nint)long.Parse(args[1], NumberStyles.HexNumber, CultureInfo.InvariantCulture);
+    var pid = int.Parse(args[2], CultureInfo.InvariantCulture);
+    var capture = new QianniuWindowCapture();
+    var window = capture.FindWindows(_ => { }).Single(w => w.Hwnd == hwnd && w.Pid == pid && w.IsVisible && !w.IsMinimized && w.WindowTitle.Contains("接待中心", StringComparison.Ordinal));
+    var result = await capture.CaptureAsync(window, args[3]);
+    File.WriteAllText(Path.Combine(args[3], "capture-result.json"), JsonSerializer.Serialize(result));
+    return 0;
+}
+if (args.Length == 3 && args[0] == "--ocr-worker")
+{
+    var result = new PaddleOcrService().Recognize(args[1]);
+    File.WriteAllText(args[2], JsonSerializer.Serialize(result));
+    return 0;
+}
+
 Console.OutputEncoding = Encoding.UTF8;
-Console.WriteLine("[QN OCR POC V1.3]");
+Console.WriteLine("[QN OCR POC V1.4]");
 Console.WriteLine($"Time: {DateTimeOffset.Now:O}");
 Console.WriteLine($"Runtime: {System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription}");
 var operation = "Capture";
@@ -26,6 +44,8 @@ try
         var interval = 1000;
         string? identity = null;
         var aiShadow = false;
+        double? minutes = null;
+        string? stateDirectory = null;
         var seen = new HashSet<string>(StringComparer.Ordinal);
         for (var i = 1; i < args.Length; i++)
         {
@@ -35,6 +55,8 @@ try
             if (args[i] == "--frames" && int.TryParse(args[i + 1], out var n) && n > 0) frames = n;
             else if (args[i] == "--interval-ms" && int.TryParse(args[i + 1], out var ms) && ms is >= 100 and <= 60000) interval = ms;
             else if (args[i] == "--identity" && !string.IsNullOrWhiteSpace(args[i + 1])) identity = args[i + 1];
+            else if (args[i] == "--minutes" && double.TryParse(args[i + 1], out var duration) && double.IsFinite(duration) && duration > 0) minutes = duration;
+            else if (args[i] == "--state-dir" && !string.IsNullOrWhiteSpace(args[i + 1])) stateDirectory = args[i + 1];
             else { Console.Error.WriteLine("Invalid shadow option/value."); return 2; }
             i++;
         }
@@ -44,7 +66,7 @@ try
         Console.CancelKeyPress += handler;
         try
         {
-            var summary = await new QnocrShadowRunner().RunAsync(new(frames, interval, identity, aiShadow), cancellation.Token);
+            var summary = await new QnocrShadowRunner().RunAsync(new(frames, interval, identity, aiShadow, minutes, stateDirectory), cancellation.Token);
             return summary.Status is "Completed" or "Cancelled" or "StoppedByRequest" ? 0 : 3;
         }
         finally { Console.CancelKeyPress -= handler; }

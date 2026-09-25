@@ -91,6 +91,10 @@ internal static class MessageChecks
         var split = Fixture("split_header", splitHeader: true);
         var splitResult = parser.Structure(Ocr(split, Line(10, "buyer01", new(100, 80, 75, 25)), Line(11, "2026-9-24 19:51:45", new(185, 80, 220, 25)), first));
         check(splitResult.Messages.Count == 1 && splitResult.Evidence[0].HeaderLineNumbers.Count == 2, "split nickname/time header uses geometry, not OCR array order");
+        var overlap = parser.Structure(Ocr(split, Line(10, "buyer01", new(100, 80, 94, 25)), Line(11, "2026-9-24 19:51:45", new(185, 80, 220, 25)), first));
+        check(overlap.Messages.Count == 1, "nine-pixel OCR header box overlap is accepted with otherwise reliable unique gray header");
+        var excessiveOverlap = parser.Structure(Ocr(split, Line(10, "buyer01", new(100, 80, 115, 25)), Line(11, "2026-9-24 19:51:45", new(185, 80, 220, 25)), first));
+        check(excessiveOverlap.Messages.Count == 0, "header boxes overlapping more than half a line height remain unconfirmed");
         var blue = Fixture("seller_blue", Color.FromArgb(232, 239, 255));
         check(parser.Structure(Ocr(blue, header, first)).Messages.Count == 0, "blue seller-style bubble is not classified as buyer");
         var right = Fixture("right_white", right: true);

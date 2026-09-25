@@ -1,7 +1,66 @@
-# qnocr-poc V1.3
+# qnocr-poc V1.4
 
 独立的千牛视觉采集实验：窗口捕获 → 布局裁剪 → OCR → BuyerMessage → 统一MessageEnvelope。
 主程序使用 C# / .NET 8 / Windows；V1.0增加独立.NET Framework 4.8离线兼容性宿主，不修改qnbot。
+
+## V1.4 输入稳定化
+
+沿用原有截图、布局、OCR、BuyerMessage、MessageEnvelope与Adapter；新增外层Session、持久派发与恢复，不替换契约。
+当前仓库是qnocr-poc，承担qnbot-agent视觉输入宿主职责，未创建另一个架构或修改qnbot核心。
+默认 `--shadow` 为AI OFF、Send OFF，现在在隔离宿主中实际进入原qnbot协调器，只获得记录回调。
+
+```powershell
+dotnet run -- --shadow --identity Validation/QnbotCompatibility/identity_mapping.json
+# 31分钟有限运行，结束后保留持久状态，后续同目录重启不会重复已确认消息
+dotnet run -- --shadow --minutes 31 --identity Validation/QnbotCompatibility/identity_mapping.json --state-dir Output/State/V14
+```
+
+仍支持 `--frames`、`--interval-ms`、Ctrl+C及当前日志目录的 `stop.request`。
+显式 `--ai-shadow` 保留AI预览能力，V1.4输入验收不需要开启它。发送始终关闭。
+启动前需按原章节构建 `Validation/QnbotCompatibility` 宿主；.NET命令需位于PATH。
+
+实现要点：
+
+- 原文不修改；外层比较使用NFKC宽度归一化及空白折叠。`？`/`?`、全角型号、换行空白不会产生第二个比较键，
+  `?`/`!`、型号字母/数字及大小写差异仍保留。原始文本照常进入原MessageEnvelope和qnbot原有去重。
+- 稳定MessageId含SessionId、角色、规范化文字和完整源时间。完整Fingerprint仍记录商品上下文；
+  稳定MessageId不因当前商品区域变化而改变，避免同一消息重新派发。相同文字但不同源秒保留为真实重复发送。
+- 首个买家快照只建立基线；新增接受窗口允许最多2分钟显示/观察时间差，同时拒绝比初始源基线更旧的历史。
+  新出现但超过当前观察时间前后2分钟的消息不自动派发。该容差不能代替平台消息ID，最近历史滚入或OCR时间误读仍需审计。
+- 从已有OCR确认消息头提取唯一买家标签，只用于外层分会话；不通过UIA读取文本，不把标签当平台ID。
+  不同标签对应不同SessionId。同买家切换商品保持SessionId，当前商品识别失败即留空。
+  隔离测试映射会生成每个买家独立的测试BuyerId/昵称，避免在测试协调器中串会话。混合/未知标签保留证据，不猜测路由。
+- `Output/State/V14` 默认保存 `sessions/` 与 `outbox/<MessageId>/`。Envelope先原子落盘，再进入Adapter，成功回执持久化。
+  单状态目录以文件锁排除并发写入；已完成MessageId跨进程重启去重，qnbot原有MessageKey算法不改。
+- 明确未启动的失败（宿主未准备、进程未启动）指数退避，最多间隔60秒；不确定结果保留Uncertain，不盲目重试。
+  崩溃时Dispatching在重启后转Uncertain；损坏状态文件保持原样，不覆盖后重新投递。
+  这些是待核查结果，不承诺在所有崩溃窗口中恰好一次。后续需要对照回执处理，不能删除状态掩盖不确定性。
+- 旧Pending事件的AI模式与当前启动模式不一致时进入ConfigurationHold，不悄悄改变其处理方式。
+- 截图与OCR在本任务创建的短生命周期子进程中执行，分别有20秒和45秒父进程预算；超时只结束相应工作进程。
+  子进程必须使用附带PerMonitorV2清单的qnocr-poc apphost，避免跨DPI时逻辑窗口尺寸截断物理像素。
+  Agent保留会话和待处理事件，退避并重新发现相同标题的接待中心。窗口不存在、最小化或存在多个候选时等待，不切换到其他账号。
+- UIA异常采用原视觉/比例Fallback；图像基线重建不清空消息去重。商品OCR失败不会复用旧商品ID，聊天OCR失败下一帧重试。
+  姓名/日期OCR边界允许最多半行高度的轻微重叠，仍要求同一行、灰色、唯一姓名及完整可靠日期，不放松角色或置信度门槛。
+  Adapter异常由独立派发循环隔离；日志暂不可写时使用控制台提示，持久状态是交付结果的权威记录。
+
+内存约束：每个消息比较器最多约10,000条/24小时记录，最多256个驻留买家比较器；最多1,000个Pending/Dispatching事件，
+派发缓存保留约11,000个条目，旧完成项仍以磁盘记录防重复。状态目录和事件截图不自动删除，长期部署需单独制定归档/磁盘配额。
+初始化配置错误、目录无权限或状态目录被另一进程占用会启动失败；“运行异常恢复”不等于屏蔽所有系统级故障。
+
+日志位于独立的 `Output/Shadow/shadow_*`：
+
+- `lifecycle.jsonl`：逐消息CaptureTime、Source、Buyer、ProductId、SessionId、MessageId/Fingerprint、Stage、AdapterResult、DispatchResult、AiState及尝试次数。
+- `shadow.jsonl`：图像变化、当前Session及新增判断；`recovery.jsonl`：窗口绑定、OCR/UIA与帧恢复；`health.jsonl`：每分钟计数、内存及积压。
+- `summary.json`：真实运行时长、处理及异常统计；`frame_*`：图像/OCR/Session/Envelope证据。
+- 持久状态 `outbox/<MessageId>/attempt_*`：原生qnbot消息对象与协调器接收回执。
+
+Session信息是外层关联元数据，MessageEnvelope schema v1没有增加或替换字段。
+空会话/无法可靠读出买家标签、多窗口、同秒同文重复、最近历史滚入以及OCR昵称误读仍有边界；不宣称已获得真实买家身份或完成生产多账号路由。
+最终版实测31分1.67秒、1021帧无失败；受控10条消息全部进入原协调器，重复/误触发/发送0。
+期间另有2条其他买家真实消息进入独立Session。213项检查及原入口17项回归通过，详见 [VALIDATION_V14.md](VALIDATION_V14.md)。
+
+回滚：停止当前Shadow（Ctrl+C/stop.request），回滚V1.4提交后重新构建；保留Output和State供审计。
+如明确要开展独立新实验，选择新的 `--state-dir`，不要删除旧状态来绕过去重。
 
 ## V1.3 AI Shadow（真实测试完成，准确性与知识质量未通过）
 

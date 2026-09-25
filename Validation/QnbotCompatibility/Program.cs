@@ -30,6 +30,7 @@ namespace CompatibilityHost
                 return await new AiShadowRuntime().TestProviderAsync();
             if (args.Length == 1 && args[0] == "--ai-preflight") { Console.WriteLine(Json.Serialize(new AiShadowRuntime().Preflight())); return 0; }
             if (args.Length == 4 && args[0] == "--ai-shadow") return await RunAiShadowAsync(args[1], args[2], args[3]);
+            if (args.Length == 4 && args[0] == "--dispatch-shadow") return await RunDispatchShadowAsync(args[1], args[2], args[3]);
             if (args.Length == 4 && args[0] == "--shadow-convert") return RunShadowConversion(args[1], args[2], args[3]);
             if (args.Length != 3) { Console.Error.WriteLine("Usage: QnbotCompatibility.exe envelope.json identity_mapping.json output-directory"); return 2; }
             var manifest = VerifySourceSnapshot();
@@ -87,6 +88,39 @@ namespace CompatibilityHost
             File.WriteAllText(Path.Combine(args[2], "compatibility-result.json"), Json.Serialize(result));
             Console.WriteLine(Json.Serialize(result));
             coordinator.CancelBuyer(identity.SellerNick, identity.BuyerNick, "offline_test_complete");
+            return 0;
+        }
+
+        private static async Task<int> RunDispatchShadowAsync(string envelopePath, string identityPath, string output)
+        {
+            var manifest = VerifySourceSnapshot();
+            var envelope = Json.Deserialize<MessageEnvelope>(File.ReadAllText(envelopePath));
+            var identity = Json.Deserialize<QnbotIdentityMapping>(File.ReadAllText(identityPath));
+            if (!identity.IsTestMapping) throw new InvalidDataException("Shadow dispatch accepts isolated test identities only.");
+            var items = new QnocrMessageAdapter().Convert(envelope, identity, TimeZoneInfo.FindSystemTimeZoneById("China Standard Time"), DateTime.Now, "qnocr-stable-shadow-v14");
+            if (items.Count == 0) throw new InvalidDataException("No confirmed message.");
+            Directory.CreateDirectory(output);
+            var completed = new TaskCompletionSource<int>();
+            var callbacks = 0;
+            var coordinator = new BuyerMessageBurstCoordinator(lease =>
+            {
+                System.Threading.Interlocked.Increment(ref callbacks);
+                completed.TrySetResult(lease.Burst.Items.Count);
+                return Task.CompletedTask;
+            });
+            foreach (var item in items) coordinator.Enqueue(item.BurstItem);
+            if (await Task.WhenAny(completed.Task, Task.Delay(8000)) != completed.Task) throw new TimeoutException("No coordinator acknowledgement.");
+            var count = await completed.Task;
+            if (Guard.ForbiddenCalls != 0 || count != items.Count) throw new InvalidOperationException("Shadow dispatch boundary/count mismatch.");
+            File.WriteAllText(Path.Combine(output, "qnbot-messages.json"), Json.Serialize(items.Select(i => i.BurstItem.Message).ToArray()));
+            var receipt = new { Mode = "ShadowDispatchOnly", Status = "Converted", Reason = (string)null,
+                ConvertedMessages = count, AdapterResult = "Converted", DispatchResult = "Accepted", CoordinatorCreated = true,
+                CoordinatorCallbacks = callbacks, AiInvoked = false, AiEnabled = false, SendEnabled = false, SentMessages = 0,
+                SendEntryInvoked = false, ForbiddenBusinessCalls = Guard.ForbiddenCalls, RuntimeInitializers = Guard.SuppressedInitializers,
+                SourceFilesVerified = manifest.Sources.Length, QnbotBaselineCommit = manifest.QnbotCommit, IsTestIdentity = true };
+            File.WriteAllText(Path.Combine(output, "shadow-adapter-result.json"), Json.Serialize(receipt));
+            Console.WriteLine(Json.Serialize(receipt));
+            coordinator.CancelBuyer(identity.SellerNick, identity.BuyerNick, "shadow_dispatch_complete");
             return 0;
         }
 

@@ -7,7 +7,7 @@ public sealed record ShadowAdapterResult(string Status, int ConvertedMessages, s
     bool AiInvoked = false, string? ReplySuggestion = null);
 
 /// <summary>Calls only the isolated conversion-only host. Never attaches to a running Bot process.</summary>
-public sealed class ShadowAdapterClient(bool aiShadow = false)
+public sealed class ShadowAdapterClient(bool aiShadow = false, bool dispatch = false)
 {
     public async Task<ShadowAdapterResult> ConvertAsync(string envelopePath, string? identityPath, string outputDirectory, CancellationToken token)
     {
@@ -16,11 +16,14 @@ public sealed class ShadowAdapterClient(bool aiShadow = false)
         Directory.CreateDirectory(outputDirectory);
         var start = new ProcessStartInfo(host) { UseShellExecute = false, CreateNoWindow = true, WindowStyle = ProcessWindowStyle.Hidden,
             RedirectStandardOutput = true, RedirectStandardError = true };
-        start.ArgumentList.Add(aiShadow ? "--ai-shadow" : "--shadow-convert");
+        start.ArgumentList.Add(aiShadow ? "--ai-shadow" : dispatch ? "--dispatch-shadow" : "--shadow-convert");
         start.ArgumentList.Add(Path.GetFullPath(envelopePath));
         start.ArgumentList.Add(identityPath is null ? "-" : Path.GetFullPath(identityPath));
         start.ArgumentList.Add(Path.GetFullPath(outputDirectory));
-        using var process = Process.Start(start) ?? throw new IOException("Could not start isolated adapter host.");
+        Process? child;
+        try { child = Process.Start(start); }
+        catch (System.ComponentModel.Win32Exception) { return new("HostNotStarted", 0, null, "Host could not start; retry is safe."); }
+        using var process = child ?? throw new IOException("Could not start isolated adapter host.");
         var stdout = process.StandardOutput.ReadToEndAsync();
         var stderr = process.StandardError.ReadToEndAsync();
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
@@ -39,10 +42,10 @@ public sealed class ShadowAdapterClient(bool aiShadow = false)
         if ((!aiShadow && process.ExitCode != 0) || !File.Exists(receiptPath)) return new("HostFailed", 0, null, $"Isolated adapter exit code {process.ExitCode}; see adapter-process.log.");
         using var receipt = JsonDocument.Parse(await File.ReadAllTextAsync(receiptPath, token));
         var value = receipt.RootElement;
-        if (value.GetProperty("Mode").GetString() != (aiShadow ? "AiShadowPreviewOnly" : "ShadowConversionOnly") ||
-            value.GetProperty("CoordinatorCreated").GetBoolean() != aiShadow || value.GetProperty("ForbiddenBusinessCalls").GetInt32() != 0 ||
-            (!aiShadow && value.GetProperty("RuntimeInitializers").GetInt32() != 0) ||
-            (aiShadow && (value.GetProperty("SendEnabled").GetBoolean() || value.GetProperty("SendEntryInvoked").GetBoolean() || value.GetProperty("SentMessages").GetInt32() != 0)))
+        if (value.GetProperty("Mode").GetString() != (aiShadow ? "AiShadowPreviewOnly" : dispatch ? "ShadowDispatchOnly" : "ShadowConversionOnly") ||
+            value.GetProperty("CoordinatorCreated").GetBoolean() != (aiShadow || dispatch) || value.GetProperty("ForbiddenBusinessCalls").GetInt32() != 0 ||
+            (!aiShadow && !dispatch && value.GetProperty("RuntimeInitializers").GetInt32() != 0) ||
+            ((aiShadow || dispatch) && (value.GetProperty("SendEnabled").GetBoolean() || value.GetProperty("SendEntryInvoked").GetBoolean() || value.GetProperty("SentMessages").GetInt32() != 0)))
             throw new InvalidDataException("Adapter receipt violates conversion-only boundary.");
         return new(value.GetProperty("Status").GetString()!, value.GetProperty("ConvertedMessages").GetInt32(), Path.GetFullPath(receiptPath),
             value.GetProperty("Reason").GetString(), aiShadow && value.GetProperty("AiInvoked").GetBoolean(),

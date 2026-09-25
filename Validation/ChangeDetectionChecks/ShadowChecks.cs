@@ -24,9 +24,9 @@ internal static class ShadowChecks
         check(MessageFingerprint.Create(five[0]) != MessageFingerprint.Create(Message(five[0].Text, 2)), "fingerprint includes timestamp");
         check(MessageFingerprint.Create(five[0]) != MessageFingerprint.Create(new BuyerMessage { Role = "seller", Text = five[0].Text, Timestamp = five[0].Timestamp }), "fingerprint includes role");
         check(MessageFingerprint.Create(five[0]) == MessageFingerprint.Create(Message(five[0].Text, 1)), "fingerprint is deterministic");
-        check(tracker.Compare([Message("新滚出的旧历史", -20)], start.AddSeconds(12)).Decisions[0].Disposition == "HistoricalBeforeObservation", "unseen old history is not an arrival");
+        check(tracker.Compare([Message("新滚出的旧历史", -200)], start.AddSeconds(12)).Decisions[0].Disposition == "HistoricalBeforeObservation", "old history outside clock-skew window is not an arrival");
         check(tracker.Compare([Message("多少钱", 13)], start.AddSeconds(14)).NewMessages.Count == 1, "same text at a different new timestamp is distinct");
-        check(tracker.Compare([Message("未来误读", 100)], start).NewMessages.Count == 0, "future OCR timestamp is review-only");
+        check(tracker.Compare([Message("未来误读", 180)], start).NewMessages.Count == 0, "future OCR timestamp outside tolerance is review-only");
         var sameFrame = Message("same-frame", 14);
         check(tracker.Compare([sameFrame, sameFrame], start.AddSeconds(15)).NewMessages.Count == 1, "duplicates inside one batch suppressed");
         OcrResult ProductEvidence(string text) => new("synthetic", "fixture", [new(1, text, .99f, new(0, 0, 200, 30))], 0, .99, 0, 0, 0, 0, 0, 0);
@@ -36,6 +36,7 @@ internal static class ShadowChecks
 
         var fixture = Path.GetFullPath("Output/ValidationV08/buyer_message.png");
         var mapping = Path.GetFullPath("Validation/QnbotCompatibility/identity_mapping.json");
+        ShadowRunOptions Options(int? n, string? map = null) => new(n, 0, map, StateDirectory: Path.GetFullPath(Path.Combine("Output", "ValidationV14", Guid.NewGuid().ToString("N"))));
         var count = 0;
         var noProduct = false;
         static ResolvedLayout Layout(int width = 800) => new(new(1000, 600),
@@ -68,43 +69,54 @@ internal static class ShadowChecks
             return Task.FromResult(new CaptureResult(true, path, "Synthetic", "Owned test capture"));
         }
         QnocrShadowRunner Runner() => new(Capture, (_, _) => Task.FromResult(Layout()), Ocr, displayNow: () => start);
-        var result = await Runner().RunAsync(new(4, 0, mapping));
+        var result = await Runner().RunAsync(Options(4, mapping));
         check(result.Status == "Completed" && result.SuccessfulFrames == 4, "bounded Shadow replay completes");
         check(result.ChatOcrCalls == 3 && result.ProductOcrCalls == 3, "each OCR pass reads current product, static frame skips OCR");
         check(result.NewMessages == 1 && result.BaselineMessages == 1 && result.DuplicateObservations == 1 && result.Envelopes == 1, "baseline plus repeated changed frames produce exactly one envelope");
         check(result.ConvertedMessages == 1 && result.ConvertedEnvelopes == 1, "new message traverses actual isolated adapter");
         check(!Directory.GetFiles(Path.Combine(result.SessionDirectory, "frame_000001"), "envelope_*.json").Any(), "baseline has no envelope file");
-        var receipt = Directory.GetFiles(result.SessionDirectory, "shadow-adapter-result.json", SearchOption.AllDirectories).Single();
+        var receipt = Directory.GetFiles(result.StateDirectory!, "shadow-adapter-result.json", SearchOption.AllDirectories).Single();
         using (var doc = JsonDocument.Parse(File.ReadAllText(receipt)))
         {
             var r = doc.RootElement;
-            check(!r.GetProperty("CoordinatorCreated").GetBoolean() && r.GetProperty("ForbiddenBusinessCalls").GetInt32() == 0 && r.GetProperty("RuntimeInitializers").GetInt32() == 0 && r.GetProperty("SourceFilesVerified").GetInt32() == 6,
-                "adapter verifies pinned sources and zero business/runtime initialization");
+            check(r.GetProperty("CoordinatorCreated").GetBoolean() && r.GetProperty("ForbiddenBusinessCalls").GetInt32() == 0 && r.GetProperty("SentMessages").GetInt32() == 0 && r.GetProperty("SourceFilesVerified").GetInt32() == 6,
+                "adapter enters original coordinator with verified source and zero send/business calls");
         }
         count = 0; noProduct = true;
-        var empty = await Runner().RunAsync(new(2, 0, mapping));
+        var empty = await Runner().RunAsync(Options(2, mapping));
         using (var doc = JsonDocument.Parse(File.ReadAllText(Directory.GetFiles(empty.SessionDirectory, "envelope_*.json", SearchOption.AllDirectories).Single())))
             check(doc.RootElement.GetProperty("ProductId").GetString() == "", "unrecognized product never inherits baseline ID");
         count = 0;
-        var unknown = await Runner().RunAsync(new(2, 0));
+        var unknown = await Runner().RunAsync(Options(2));
         check(unknown.DeferredEnvelopes == 1 && unknown.ConvertedMessages == 0 && unknown.Status == "CompletedWithIssues", "unknown identity is rejected by actual adapter");
         count = 0;
         Task<CaptureResult> Fail() { count++; return Task.FromResult(new CaptureResult(false, null, "Synthetic", "Simulated failure")); }
-        var recovery = await new QnocrShadowRunner(d => count == 2 ? Fail() : Capture(d), (_, _) => Task.FromResult(Layout()), Ocr, displayNow: () => start).RunAsync(new(4, 0, mapping));
+        var recovery = await new QnocrShadowRunner(d => count == 2 ? Fail() : Capture(d), (_, _) => Task.FromResult(Layout()), Ocr, displayNow: () => start).RunAsync(Options(4, mapping));
         check(recovery.FailedFrames == 1 && recovery.NewMessages == 1 && recovery.Envelopes == 1 && recovery.DuplicateObservations == 1, "capture failure preserves message deduplication");
         count = 0;
-        var resize = await new QnocrShadowRunner(Capture, (_, _) => Task.FromResult(Layout(count <= 2 ? 800 : 799)), Ocr, displayNow: () => start).RunAsync(new(3, 0, mapping));
+        var resize = await new QnocrShadowRunner(Capture, (_, _) => Task.FromResult(Layout(count <= 2 ? 800 : 799)), Ocr, displayNow: () => start).RunAsync(Options(3, mapping));
         check(resize.NewMessages == 1 && resize.DuplicateObservations == 1, "layout reset preserves fingerprints");
         count = 0;
         using var cancel = new CancellationTokenSource();
         var host = new ShadowAdapterClient();
         var cancelled = await new QnocrShadowRunner(Capture, (_, _) => Task.FromResult(Layout()), Ocr,
-            async (e, i, o, t) => { var r = await host.ConvertAsync(e, i, o, t); cancel.Cancel(); return r; }, () => start).RunAsync(new(null, 0, mapping), cancel.Token);
-        check(cancelled.Status == "Cancelled" && cancelled.Attempts == 2 && File.Exists(Path.Combine(cancelled.SessionDirectory, "summary.json")), "continuous cancellation persists summary");
+            async (e, i, o, t) => { var r = await host.ConvertAsync(e, i, o, t); cancel.Cancel(); return r; }, () => start).RunAsync(Options(null, mapping) with { IntervalMilliseconds = 20 }, cancel.Token);
+        check(cancelled.Status == "Cancelled" && cancelled.Attempts >= 2 && File.Exists(Path.Combine(cancelled.SessionDirectory, "summary.json")), "continuous cancellation persists summary");
         try { await Runner().RunAsync(new(0)); check(false, "invalid frames"); } catch (ArgumentOutOfRangeException) { check(true, "invalid frame count rejected"); }
         using var preCancelled = new CancellationTokenSource(); preCancelled.Cancel(); count = 0;
         try { await Runner().RunAsync(new(1), preCancelled.Token); check(false, "pre-cancel"); } catch (OperationCanceledException) { check(count == 0, "pre-cancel prevents capture"); }
-        var timeout = await new QnocrShadowRunner(_ => Task.FromResult(new CaptureResult(false, null, "Synthetic", "Timeout", TimedOut: true)), displayNow: () => start).RunAsync(new(5, 0));
-        check(timeout.Attempts == 1 && timeout.Status == "CaptureTimedOut", "native timeout stops loop");
+        count = 0;
+        var timeout = await new QnocrShadowRunner(d => count++ == 0 ? Task.FromResult(new CaptureResult(false, null, "Synthetic", "Timeout", TimedOut: true)) : Capture(d),
+            (_, _) => Task.FromResult(Layout()), Ocr, displayNow: () => start).RunAsync(Options(2));
+        check(timeout.Attempts == 2 && timeout.FailedFrames == 1 && timeout.SuccessfulFrames == 1, "native timeout does not exit agent; next frame recovers");
+        count = 0;
+        var ocrFailure = await new QnocrShadowRunner(Capture, (_, _) => Task.FromResult(Layout()),
+            path => count == 2 && Path.GetFileName(path) == "chat_region.png" ? throw new IOException("injected OCR failure") : Ocr(path),
+            displayNow: () => start).RunAsync(Options(3, mapping));
+        check(ocrFailure.FailedFrames == 1 && ocrFailure.ConvertedMessages == 1, "OCR failure retains buyer baseline and next successful frame delivers new message");
+        count = 0;
+        var layoutFailure = await new QnocrShadowRunner(Capture, (_, _) => throw new System.Runtime.InteropServices.COMException("injected UIA failure"), Ocr,
+            displayNow: () => start).RunAsync(Options(1));
+        check(layoutFailure.SuccessfulFrames == 1 && layoutFailure.RecoveryEvents == 1, "UIA/layout exception uses geometry-free fallback without exiting");
     }
 }
