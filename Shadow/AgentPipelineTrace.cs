@@ -47,12 +47,13 @@ public sealed class AgentPipelineTrace(string runDirectory)
         Write(new(at, "AI_REQUEST", item.CaptureId ?? "", item.Session.SessionId, item.Session.BuyerId,
             item.MessageId, context.AiRequestId, null, item.Envelope.ProductId, context.Messages.Count,
             promptLength, scope, $"ModelInputMessageCount={context.ModelInputMessageCount}"));
-    public bool Response(DispatchItem item, SessionContextView context, ShadowAdapterResult result) =>
+    public bool Response(DispatchItem item, SessionContextView context, ShadowAdapterResult result, string? aiResponseId) =>
         Write(new(DateTimeOffset.Now, result.Status == "EmptyReply" ? "EMPTY_REPLY" : result.Status == "Converted" ? "AI_RESPONSE" : "AI_ERROR",
             item.CaptureId ?? "", item.Session.SessionId, item.Session.BuyerId, item.MessageId, context.AiRequestId,
-            null, item.Envelope.ProductId, context.Messages.Count, null, null, result.Status == "Converted" ? "Reply generated" : result.Reason ?? result.Status));
+            null, item.Envelope.ProductId, context.Messages.Count, null, null, result.Status == "Converted" ? "Reply generated" : result.Reason ?? result.Status,
+            aiResponseId));
     public bool Preview(DispatchItem item, ReplyPreview preview) =>
         Write(new(preview.CreatedAt, "REPLY_PREVIEW_CREATED", item.CaptureId ?? "", item.Session.SessionId,
             item.Session.BuyerId, item.MessageId, preview.AiRequestId, preview.ReplyPreviewId,
-            item.Envelope.ProductId, preview.Input.Messages.Count, null, null, "SendStatus=Shadow"));
+            item.Envelope.ProductId, preview.Input.Messages.Count, null, null, "SendStatus=Shadow", preview.AiResponseId));
 }

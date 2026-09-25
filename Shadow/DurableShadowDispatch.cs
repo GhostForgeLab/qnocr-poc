@@ -6,7 +6,7 @@ namespace QnocrPoc.Shadow;
 public sealed record DispatchItem(string MessageId, string Fingerprint, MessageSession Session, MessageEnvelope Envelope,
     DateTimeOffset CaptureTime, bool AiEnabled, string State = "Pending", int Attempts = 0,
     DateTimeOffset NextAttempt = default, string? ReceiptPath = null, bool AiInvoked = false,
-    string? CaptureId = null, string? AiRequestId = null, string? AiResultStatus = null);
+    string? CaptureId = null, string? AiRequestId = null, string? AiResultStatus = null, int AiCalls = 0);
 
 /// <summary>Local outer idempotency and recoverable outbox. Ambiguous target outcomes are held, never blindly replayed.</summary>
 public sealed class DurableShadowDispatch : IDisposable
@@ -140,11 +140,12 @@ public sealed class DurableShadowDispatch : IDisposable
                     _agentTrace.Request(item, context, length, scope, result.AiRequestAt ?? requestedAt);
                     if (result.Status == "Converted" && string.IsNullOrWhiteSpace(result.ReplySuggestion))
                         result = result with { Status = "EmptyReply", Reason = "AI result was empty; no preview created." };
-                    _agentTrace.Response(item, context, result);
+                    var aiResponseId = result.Status == "Converted" ? Guid.NewGuid().ToString("N") : null;
+                    _agentTrace.Response(item, context, result, aiResponseId);
                     if (result.Status == "Converted")
                     {
                         var preview = new ReplyPreview(item.Session.SessionId, item.Session.BuyerId, context, result.ReplySuggestion!,
-                            null, DateTimeOffset.Now, "Shadow", item.CaptureId ?? "", context.AiRequestId, Guid.NewGuid().ToString("N"));
+                            null, DateTimeOffset.Now, "Shadow", item.CaptureId ?? "", context.AiRequestId, aiResponseId!, Guid.NewGuid().ToString("N"));
                         try
                         {
                             AtomicJson.Write(Path.Combine(Folder(item), "reply-preview.json"), preview);
@@ -164,6 +165,7 @@ public sealed class DurableShadowDispatch : IDisposable
                 var retry = result.Status is "HostUnavailable" or "HostNotStarted" or "RetryableFailure";
                 var state = result.Status == "Converted" ? "Completed" : retry ? "Pending" : result.Status is "Rejected" or "EmptyReply" or "AiFailed" ? result.Status : "Uncertain";
                 item = item with { State = state, ReceiptPath = result.ReceiptPath, AiInvoked = result.AiInvoked, AiResultStatus = result.Status,
+                    AiCalls = result.AiCalls,
                     NextAttempt = retry ? DateTimeOffset.UtcNow.AddSeconds(Math.Min(60, Math.Pow(2, Math.Min(item.Attempts, 6)))) : default };
                 Save(item);
                 Record(item, state, result.Status, state == "Completed" ? "AcceptedByShadowCoordinator" : retry ? "RetryScheduled" : "Held", result.Reason);

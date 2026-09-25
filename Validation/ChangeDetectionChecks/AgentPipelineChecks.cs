@@ -8,6 +8,21 @@ internal static class AgentPipelineChecks
     {
         var root = Path.GetFullPath(Path.Combine("Output", "ValidationV15", Guid.NewGuid().ToString("N")));
         Directory.CreateDirectory(root);
+        string? HeaderBuyer(params string[] labels)
+        {
+            var lines = labels.Select((label, i) => new OcrLine(i + 1, label + " 2026-9-25 15:00:01", 0.95f,
+                new OcrBounds(0, i * 40, 180, 20))).ToArray();
+            var batch = new BuyerMessageBatch("fixture", "fixture", labels.Select((_, i) =>
+                new BuyerMessage { Text = "question " + i, Timestamp = new DateTime(2026, 9, 25, 15, 0, i + 1) }).ToArray(),
+                labels.Select((_, i) => new BuyerMessageEvidence(i, new OcrBounds(0, i * 40, 180, 30),
+                    Array.Empty<int>(), new[] { i + 1 }, 0.95)).ToArray(), Array.Empty<MessageReviewItem>(), "", "");
+            return SessionRegistry.ReadBuyer(batch, new OcrResult("fixture", "fixture", lines, 0, null, 0, 0, 0, 0, 0, 0));
+        }
+        check(HeaderBuyer("tb300116357", "tb3001163572", "tb300116357") == "tb300116357",
+            "one trailing digit OCR outlier with two exact buyer anchors preserves session binding");
+        check(HeaderBuyer("tb300116357", "other-buyer", "tb300116357") is null
+            && HeaderBuyer("tb300116357", "tb3001163572") is null,
+            "unrelated or two-way ambiguous buyer labels never bind a session");
         var sid = new string('A', 64);
         var session = new MessageSession(sid, "seller-test", "buyer-test:" + sid[..16], "synthetic-buyer", "IsolatedTestIdentity", "1051087533910", "test-mapping.json");
         var first = new DispatchItem(new string('1', 64), new string('2', 64), session,
@@ -31,11 +46,13 @@ internal static class AgentPipelineChecks
             check(box.Submit(latest, context) && File.Exists(Path.Combine(root, "success-state", "outbox", latest.MessageId, "context.json")),
                 "session context is durably saved beside the one-message envelope");
             box.Start(); await box.StopAsync();
-            check(adapterCalls == 1 && box.Snapshot().Single().State == "Completed", "one simulated Agent response completes one durable message");
+            check(adapterCalls == 1 && box.Snapshot().Single().State == "Completed" && box.Snapshot().Single().AiCalls == 1,
+                "one simulated Agent response durably records one AI call count");
             var preview = JsonSerializer.Deserialize<ReplyPreview>(File.ReadAllText(Path.Combine(root, "success-state", "outbox", latest.MessageId, "reply-preview.json")))!;
             check(preview.SessionId == sid && preview.BuyerId == session.BuyerId && preview.Input.Messages.Count == 2 && preview.Confidence is null
                 && preview.SendStatus == "Shadow" && preview.CaptureId == latest.CaptureId && preview.AiRequestId == latest.AiRequestId
-                && preview.ReplyPreviewId.Length > 0, "preview carries stable input/trace IDs, unknown confidence and fixed Shadow send status");
+                && preview.AiResponseId.Length > 0 && preview.ReplyPreviewId.Length > 0,
+                "preview carries capture, request, response and preview IDs with fixed Shadow send status");
         }
         var successEvents = File.ReadAllLines(Path.Combine(root, "agent-pipeline.jsonl")).Select(s => JsonDocument.Parse(s).RootElement.Clone()).ToArray();
         check(successEvents.Select(e => e.GetProperty("Event").GetString()).SequenceEqual(new[]
@@ -46,6 +63,11 @@ internal static class AgentPipelineChecks
             "capture, session and request IDs join every lifecycle row");
         check(successEvents.Single(e => e.GetProperty("Event").GetString() == "AI_REQUEST").GetProperty("PromptLength").GetInt32() == 26,
             "AI_REQUEST logs actual reported model question length without API key");
+        var responseId = successEvents.Single(e => e.GetProperty("Event").GetString() == "AI_RESPONSE")
+            .GetProperty("AiResponseId").GetString();
+        check(!string.IsNullOrEmpty(responseId) && successEvents.Single(e => e.GetProperty("Event").GetString() == "REPLY_PREVIEW_CREATED")
+            .GetProperty("AiResponseId").GetString() == responseId,
+            "AI response ID joins the response and preview audit records");
         check(!File.ReadAllText(Path.Combine(root, "agent-pipeline.jsonl")).Contains("ApiKey", StringComparison.OrdinalIgnoreCase),
             "lifecycle audit contains no key/configuration field");
 

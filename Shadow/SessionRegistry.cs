@@ -15,8 +15,19 @@ public sealed class SessionRegistry(string stateRoot, string runId, string? mapp
     {
         var labels = batch.Evidence.Select(e => string.Join(" ", e.HeaderLineNumbers.Select(n => ocr.Lines.Single(l => l.Number == n).Text)))
             .Select(text => DateText.Replace(MessageFingerprint.NormalizeText(text), "").Trim(' ', ':', '-', '|'))
-            .Where(text => text.Length > 0).Distinct(StringComparer.Ordinal).ToArray();
-        return labels.Length == 1 ? labels[0] : null;
+            .Where(text => text.Length > 0).ToArray();
+        var distinct = labels.Distinct(StringComparer.Ordinal).ToArray();
+        if (distinct.Length == 1) return distinct[0];
+        // A single trailing OCR glyph can appear beside an otherwise identical buyer header.
+        // Require two exact anchors and only one such outlier; other mixed labels remain unbound.
+        if (labels.Length < 3 || distinct.Length != 2) return null;
+        var majority = labels.GroupBy(label => label, StringComparer.Ordinal)
+            .OrderByDescending(group => group.Count()).First();
+        if (majority.Count() != labels.Length - 1 || majority.Key.Length < 6) return null;
+        var outlier = distinct.Single(label => label != majority.Key);
+        return outlier.Length == majority.Key.Length + 1
+            && outlier.StartsWith(majority.Key, StringComparison.Ordinal)
+            && char.IsDigit(outlier[outlier.Length - 1]) ? majority.Key : null;
     }
 
     public MessageSession Resolve(string observedBuyer, string productId)
