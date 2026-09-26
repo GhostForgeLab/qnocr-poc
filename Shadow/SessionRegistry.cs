@@ -70,11 +70,16 @@ public sealed class SessionRegistry(string stateRoot, string runId, string? mapp
             references.Add(new ProductReference(productId, "Qianniu.ProductRegion.OCR", at,
                 captureId ?? "", "VisibleInSameCapture;MessageAssociationUnverified"));
         }
+        var buyerIdentity = new BuyerIdentity(buyer,
+            test ? "IsolatedTestMapping" : identity is null ? "ChatHeaderOCR" : "OperatorMapping",
+            null, at, sid, test || identity is not null ? BuyerIdentityStatuses.Mapped : BuyerIdentityStatuses.Observed,
+            observedBuyer, IsTest: test);
         var result = new MessageSession(sid, seller, buyer, observedBuyer,
             test ? "IsolatedTestIdentity; OcrLabelNotPlatformIdentity" : identity is null ? "Unverified; dispatch held" : "OperatorMapping; OcrLabelNotPlatformIdentity",
             productId, identity, observedBuyer,
             previous?.CreatedAt is { } created && created != default ? created : at,
-            at, references.OrderBy(reference => reference.CapturedAt).TakeLast(128).ToArray());
+            at, references.OrderBy(reference => reference.CapturedAt).TakeLast(128).ToArray(), buyerIdentity);
+        AtomicJson.Write(Path.Combine(folder, "buyer-identity.json"), buyerIdentity);
         AtomicJson.Write(sessionFile, result);
         return result;
     }

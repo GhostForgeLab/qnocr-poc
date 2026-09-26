@@ -31,6 +31,6 @@ public static class SessionContextBuilder
             current.Session.BuyerDisplayName ?? current.Session.ObservedBuyer,
             current.Session.CreatedAt == default ? current.CaptureTime : current.Session.CreatedAt,
             current.Session.LastActivityAt == default ? current.CaptureTime : current.Session.LastActivityAt,
-            references, links);
+            references, links, current.Session.Identity);
     }
 }

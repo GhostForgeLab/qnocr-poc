@@ -9,6 +9,7 @@ namespace QnocrPoc.Integration.Wire
         public string SessionId { get; set; }
         public string BuyerId { get; set; }
         public string BuyerDisplayName { get; set; }
+        public BuyerIdentityWire Identity { get; set; }
         public DateTimeOffset CreatedAt { get; set; }
         public DateTimeOffset LastActivityAt { get; set; }
         public string ProductId { get; set; }
@@ -21,6 +22,20 @@ namespace QnocrPoc.Integration.Wire
         public List<EnvelopeMessage> Messages { get; set; }
     }
 
+    public sealed class BuyerIdentityWire
+    {
+        public string BuyerId { get; set; }
+        public string Source { get; set; }
+        public double? Confidence { get; set; }
+        public string CapturedAt { get; set; }
+        public string SessionId { get; set; }
+        public string Status { get; set; }
+        public string BuyerDisplayName { get; set; }
+        public string PlatformConversationId { get; set; }
+        public string EvidenceId { get; set; }
+        public bool IsTest { get; set; }
+        public string VerifiedAt { get; set; }
+    }
     public sealed class ProductReferenceWire
     {
         public string ProductId { get; set; }

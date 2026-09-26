@@ -94,12 +94,15 @@ internal static class ConfirmationChecks
         var native = new QnbotSendAdapter(port, new VerifiedQnbotSendTarget(preview.SessionId, preview.BuyerId,
             "seller", "buyer", true));
         var nativeResult = await native.SendAsync(request, CancellationToken.None);
-        check(nativeResult.Status == "IdentityUnverified" && port.Calls == 0,
+        check(nativeResult.Status == "IDENTITY_UNVERIFIED" && port.Calls == 0,
             "qnbot send adapter refuses synthetic OCR buyer identity before invoking a transport");
         var verifiedRequest = request with { BuyerId = "verified-platform-buyer" };
         var verifiedPort = new ProbePort();
+        var verifiedIdentity = new BuyerIdentity(verifiedRequest.BuyerId, BuyerIdentitySafety.TrustedSource, 1.0,
+            DateTimeOffset.Now, request.SessionId, BuyerIdentityStatuses.Verified, "buyer",
+            "conversation-fixture", "evidence-fixture", false, DateTimeOffset.Now);
         var verifiedAdapter = new QnbotSendAdapter(verifiedPort,
-            new VerifiedQnbotSendTarget(request.SessionId, verifiedRequest.BuyerId, "seller", "buyer", true));
+            new VerifiedQnbotSendTarget(request.SessionId, verifiedRequest.BuyerId, "seller", "buyer", true), verifiedIdentity);
         var verifiedResult = await verifiedAdapter.SendAsync(verifiedRequest, CancellationToken.None);
         check(verifiedResult.Status == "QnbotAccepted" && verifiedResult.Acknowledged && verifiedPort.Calls == 1,
             "verified target delegates once to an injected qnbot send port (synthetic fixture only)");
