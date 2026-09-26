@@ -1,7 +1,21 @@
-# qnocr-poc V1.9
+# qnocr-poc V1.10
 
 独立的千牛视觉采集实验：窗口捕获 → 布局裁剪 → OCR → BuyerMessage → 统一MessageEnvelope。
 主程序使用 C# / .NET 8 / Windows；V1.0增加独立.NET Framework 4.8离线兼容性宿主，不修改qnbot。
+## V1.10 长时间运行稳定性
+
+`--shadow` 每分钟记录运行时间、帧/消息、Session和ProductReference数量、AI调用、回复预览、错误、内存与磁盘占用。
+Session运行状态分为Active、Inactive（30分钟无新观察）和Closed（本轮停止）；新一轮可恢复同一Session，商品引用与持久去重保留。
+JSONL活跃文件达到8 MiB后滚动到本轮 `log-archive/`，不删旧审计；每轮默认运行目录1 GiB、状态目录4 GiB上限，
+达到上限即保留现场并停止，避免单轮无限增长。
+
+```powershell
+dotnet run -- --shadow --minutes 120 --interval-ms 2000 --identity Validation/QnbotCompatibility/identity_mapping.json --state-dir Output/State/V110-long-run --max-run-mb 1024 --max-state-mb 4096
+```
+
+此命令默认AI OFF、Send OFF，首次截图只建基线。运行证据位于各自 `Output/Shadow/shadow_*` 的 `health.jsonl`、
+`session-lifecycle.jsonl`、`recovery.jsonl`、`summary.json`，以及状态目录 `sessions/<SessionId>/run-state.json`。
+OCR、AI和单消息异常的隔离恢复与长时间观察结果见 [VALIDATION_V110.md](VALIDATION_V110.md)。
 
 ## V1.9 会话身份与商品引用绑定
 
