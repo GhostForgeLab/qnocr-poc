@@ -21,7 +21,12 @@ public sealed record AssistedReplyView(string ReplyPreviewId, string SessionId, 
     DateTimeOffset CreatedAt, string RiskLevel, string RiskReason, string Status, string ReplySha256,
     DateTimeOffset? EditedAt, string? EditedBy, DateTimeOffset? ApprovedAt, string? ApprovedBy,
     DateTimeOffset? CopiedAt, string? CopiedBy, string SendStatus,
-    string? ManualOutcome, DateTimeOffset? OutcomeAt, string? OutcomeBy);
+    string? ManualOutcome, DateTimeOffset? OutcomeAt, string? OutcomeBy,
+    IntentResult? Decision = null)
+{
+    public string? DecisionIntent => Decision?.IntentName;
+    public string? DecisionRiskLevel => Decision?.RiskLevel;
+}
 
 public sealed record AssistantAuditEvent(DateTimeOffset Timestamp, string Event, string ReplyPreviewId,
     string CaptureId, string SessionId, string AiRequestId, string AiResponseId,

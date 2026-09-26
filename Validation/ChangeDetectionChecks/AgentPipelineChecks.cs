@@ -44,7 +44,19 @@ internal static class AgentPipelineChecks
         check(trace.MessageCaptured(latest), "captured event and session events persist before dispatch");
         var adapterCalls = 0;
         using (var box = new DurableShadowDispatch(Path.Combine(root, "success-state"), Path.Combine(root, "life.jsonl"), CancellationToken.None,
-            (_, _, _, _) => { adapterCalls++; return Task.FromResult(new ShadowAdapterResult("Converted", 1, null, null, true, "Synthetic preview; no provider call", 26, DateTimeOffset.Now, 1)); }, true, trace))
+            (envelopePath, _, _, _) =>
+            {
+                adapterCalls++;
+                var folder = Path.GetDirectoryName(envelopePath)!;
+                var decision = JsonSerializer.Deserialize<IntentResult>(File.ReadAllText(Path.Combine(folder, "decision.json")));
+                check(decision?.IntentName == "CUSTOMIZATION_QUERY" && decision.NeedProductContext && decision.NeedKnowledge,
+                    "decision sidecar is durable before unchanged AI adapter invocation");
+                check(!File.ReadAllText(Path.Combine(folder, "context.json")).Contains("\"Decision\"") &&
+                    !File.ReadAllText(envelopePath).Contains("\"Decision\""),
+                    "decision metadata does not modify model context or MessageEnvelope input");
+                return Task.FromResult(new ShadowAdapterResult("Converted", 1, null, null, true,
+                    "Synthetic preview; no provider call", 26, DateTimeOffset.Now, 1));
+            }, true, trace))
         {
             check(box.Submit(latest, context) && File.Exists(Path.Combine(root, "success-state", "outbox", latest.MessageId, "context.json")),
                 "session context is durably saved beside the one-message envelope");
@@ -54,21 +66,30 @@ internal static class AgentPipelineChecks
             var preview = JsonSerializer.Deserialize<ReplyPreview>(File.ReadAllText(Path.Combine(root, "success-state", "outbox", latest.MessageId, "reply-preview.json")))!;
             check(preview.SessionId == sid && preview.BuyerId == session.BuyerId && preview.Input.Messages.Count == 2 && preview.Confidence is null
                 && preview.SendStatus == "Shadow" && preview.CaptureId == latest.CaptureId && preview.AiRequestId == latest.AiRequestId
-                && preview.AiResponseId.Length > 0 && preview.ReplyPreviewId.Length > 0,
+                && preview.AiResponseId.Length > 0 && preview.ReplyPreviewId.Length > 0 &&
+                preview.Decision?.IntentName == "CUSTOMIZATION_QUERY" && preview.Decision.RiskLevel == "Medium" &&
+                preview.Intent == "CUSTOMIZATION_QUERY" && preview.RiskLevel == "Medium",
                 "preview carries capture, request, response and preview IDs with fixed Shadow send status");
             var assistant = new AssistantReplyService(Path.Combine(root, "success-state")).Show(preview.ReplyPreviewId);
             check(assistant?.Status == AssistedReplyStatuses.AiGenerated && assistant.AiReply == preview.Reply
+                && assistant.Decision?.IntentName == "CUSTOMIZATION_QUERY" && assistant.DecisionRiskLevel == "Medium"
                 && File.Exists(Path.Combine(root, "success-state", "outbox", latest.MessageId, "assistant-reply.json")),
                 "Agent preview automatically initializes durable assistant review without a send action");
         }
         var successEvents = File.ReadAllLines(Path.Combine(root, "agent-pipeline.jsonl")).Select(s => JsonDocument.Parse(s).RootElement.Clone()).ToArray();
         check(successEvents.Select(e => e.GetProperty("Event").GetString()).SequenceEqual(new[]
             { "MESSAGE_CAPTURED", "SESSION_CREATED", "BUYER_BOUND", "PRODUCT_REFERENCE_BOUND", "MESSAGE_ATTACHED",
-                "SESSION_UPDATED", "AI_REQUEST", "AI_RESPONSE", "REPLY_PREVIEW_CREATED" }),
+                "SESSION_UPDATED", "DECISION_CREATED", "AI_REQUEST", "AI_RESPONSE", "REPLY_PREVIEW_CREATED" }),
             "one message follows the complete ordered Agent lifecycle");
         check(successEvents.All(e => e.GetProperty("CaptureId").GetString() == latest.CaptureId
             && e.GetProperty("SessionId").GetString() == sid && e.GetProperty("AiRequestId").GetString() == latest.AiRequestId),
             "capture, session and request IDs join every lifecycle row");
+        var decisionEvent = successEvents.Single(e => e.GetProperty("Event").GetString() == "DECISION_CREATED");
+        check(decisionEvent.GetProperty("Intent").GetString() == "CUSTOMIZATION_QUERY" &&
+            decisionEvent.GetProperty("RiskLevel").GetString() == "Medium" &&
+            decisionEvent.GetProperty("Confidence").ValueKind == JsonValueKind.Null &&
+            decisionEvent.GetProperty("MessageId").GetString() == latest.MessageId,
+            "DECISION_CREATED logs session/message, intent, uncalibrated confidence and risk before AI request");
         check(successEvents.Single(e => e.GetProperty("Event").GetString() == "AI_REQUEST").GetProperty("PromptLength").GetInt32() == 26,
             "AI_REQUEST logs actual reported model question length without API key");
         var responseId = successEvents.Single(e => e.GetProperty("Event").GetString() == "AI_RESPONSE")

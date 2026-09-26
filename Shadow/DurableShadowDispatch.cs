@@ -1,5 +1,6 @@
 using System.Text.Json;
 using QnocrPoc.Models;
+using QnocrPoc.Decision;
 
 namespace QnocrPoc.Shadow;
 
@@ -20,6 +21,7 @@ public sealed class DurableShadowDispatch : IDisposable
     private readonly CancellationToken _token;
     private readonly bool? _aiMode;
     private readonly AgentPipelineTrace? _agentTrace;
+    private readonly IIntentClassifier _intentClassifier;
     private Task? _worker;
     private volatile bool _stopping;
     public int JournalErrors { get; private set; }
@@ -27,9 +29,10 @@ public sealed class DurableShadowDispatch : IDisposable
 
     public DurableShadowDispatch(string root, string journal, CancellationToken token,
         Func<string, string?, string, CancellationToken, Task<ShadowAdapterResult>> send, bool? aiMode = null,
-        AgentPipelineTrace? agentTrace = null)
+        AgentPipelineTrace? agentTrace = null, IIntentClassifier? intentClassifier = null)
     {
-        _root = Path.GetFullPath(root); _journal = journal; _token = token; _send = send; _aiMode = aiMode; _agentTrace = agentTrace;
+        _root = Path.GetFullPath(root); _journal = journal; _token = token; _send = send; _aiMode = aiMode;
+        _agentTrace = agentTrace; _intentClassifier = intentClassifier ?? new RuleBasedIntentClassifier();
         Directory.CreateDirectory(_root);
         _lock = new FileStream(Path.Combine(_root, "agent.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
         foreach (var file in Directory.EnumerateFiles(_root, "item.json", SearchOption.AllDirectories))
@@ -113,12 +116,36 @@ public sealed class DurableShadowDispatch : IDisposable
                 Save(item); Record(item, "Attempt", "Running", "Unconfirmed", null);
                 ShadowAdapterResult result;
                 SessionContextView? context = null;
-                var requestedAt = DateTimeOffset.Now;
+                IntentResult? decision = null;
+                DateTimeOffset requestedAt = default;
                 try
                 {
                     if (item.AiEnabled)
                         context = JsonSerializer.Deserialize<SessionContextView>(File.ReadAllText(Path.Combine(Folder(item), "context.json")))
                             ?? throw new InvalidDataException("AI context is unavailable.");
+                    if (context is not null)
+                    {
+                        try
+                        {
+                            decision = _intentClassifier.Classify(context);
+                            if (decision is null || string.IsNullOrWhiteSpace(decision.IntentName) ||
+                                decision.IntentName.Length > 64 || !decision.IntentName.All(ch => ch is >= 'A' and <= 'Z' or >= '0' and <= '9' or '_') ||
+                                decision.RiskLevel is not ("Low" or "Medium" or "High") ||
+                                decision.Confidence is { } confidence && (!double.IsFinite(confidence) || confidence is < 0 or > 1))
+                                throw new InvalidDataException("Intent classifier returned invalid decision metadata.");
+                            AtomicJson.Write(Path.Combine(Folder(item), "decision.json"), decision);
+                            if (_agentTrace is not null && !_agentTrace.DecisionCreated(item, context, decision))
+                                throw new IOException("Decision audit failed; AI request not started.");
+                        }
+                        catch (Exception ex) when (ex is not OperationCanceledException)
+                        {
+                            item = item with { State = "DecisionFailed" }; Save(item);
+                            Record(item, "DecisionFailed", ex.GetType().Name, "NoAiCall", "Decision failed before AI request; no automatic retry");
+                            _agentTrace?.DecisionError(item, context, ex.GetType().Name + "; AI request not started");
+                            continue;
+                        }
+                    }
+                    requestedAt = DateTimeOffset.Now;
                     result = await _send(Path.Combine(Folder(item), "envelope.json"), item.Session.IdentityPath,
                         Path.Combine(Folder(item), $"attempt_{item.Attempts:D4}"), _token);
                 }
@@ -145,7 +172,7 @@ public sealed class DurableShadowDispatch : IDisposable
                     if (result.Status == "Converted")
                     {
                         var preview = new ReplyPreview(item.Session.SessionId, item.Session.BuyerId, context, result.ReplySuggestion!,
-                            null, DateTimeOffset.Now, "Shadow", item.CaptureId ?? "", context.AiRequestId, aiResponseId!, Guid.NewGuid().ToString("N"));
+                            null, DateTimeOffset.Now, "Shadow", item.CaptureId ?? "", context.AiRequestId, aiResponseId!, Guid.NewGuid().ToString("N"), decision);
                         try
                         {
                             AtomicJson.Write(Path.Combine(Folder(item), "reply-preview.json"), preview);

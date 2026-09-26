@@ -83,11 +83,11 @@ public sealed class QnocrShadowRunner
         var runIds = new HashSet<string>(StringComparer.Ordinal); var sessionIds = new HashSet<string>(StringComparer.Ordinal);
         var outOfScopeMessages = 0;
         var status = "Completed";
-        AtomicJson.Write(Path.Combine(run, "session.json"), new { Version = "1.11-A", StartedAt = startedAt, StateDirectory = stateRoot,
+        AtomicJson.Write(Path.Combine(run, "session.json"), new { Version = "1.15", StartedAt = startedAt, StateDirectory = stateRoot,
             options.MaximumFrames, options.MaximumMinutes, options.MaxRunMegabytes, options.MaxStateMegabytes, AiEnabled = options.AiShadow, SendEnabled = false,
             AllowedAiSession = allowedAiSession, ProviderConfig = options.AiProviderConfigPath ?? "Config/ai-provider.json",
             Identity = "Per-buyer OCR label sessions; test identities are isolated, no platform identity inference" });
-        Console.WriteLine($"[SHADOW V1.11-A] Session: {run}\nState: {stateRoot}\nAI={(options.AiShadow ? "ON" : "OFF")}; Send=OFF; first buyer snapshot is baseline. stop.request stops cleanly.");
+        Console.WriteLine($"[SHADOW V1.15] Session: {run}\nState: {stateRoot}\nAI={(options.AiShadow ? "ON" : "OFF")}; Send=OFF; first buyer snapshot is baseline. stop.request stops cleanly.");
         Console.WriteLine($"[Shadow Flags] AI_ENABLED={options.AiShadow.ToString().ToLowerInvariant()} SEND_ENABLED=false");
         try
         {
@@ -256,7 +256,7 @@ public sealed class QnocrShadowRunner
                     var aiCalls = currentItems.Sum(i => i.AiCalls);
                     var previews = currentItems.Count(i => i.AiEnabled && i.State == "Completed");
                     var errors = failures + recoveries + dispatch.JournalErrors + agentTrace.Errors
-                        + currentItems.Count(i => i.State is "AiFailed" or "Uncertain");
+                        + currentItems.Count(i => i.State is "AiFailed" or "Uncertain" or "DecisionFailed");
                     var persistedSessionsNow = Directory.Exists(Path.Combine(stateRoot, "sessions"))
                         ? Directory.EnumerateDirectories(Path.Combine(stateRoot, "sessions")).Count() : 0;
                     SafeAppend(run, "health.jsonl", new { At = now, StartedAt = startedAt, ElapsedSeconds = watch.Elapsed.TotalSeconds,
@@ -309,7 +309,7 @@ public sealed class QnocrShadowRunner
         var persistedSessions = Directory.Exists(Path.Combine(stateRoot, "sessions"))
             ? Directory.EnumerateDirectories(Path.Combine(stateRoot, "sessions")).Count() : 0;
         var errorCount = failures + recoveries + dispatch.JournalErrors + agentTrace.Errors
-            + current.Count(i => i.State is "AiFailed" or "Uncertain");
+            + current.Count(i => i.State is "AiFailed" or "Uncertain" or "DecisionFailed");
         var summary = new ShadowRunSummary(status, attempts, frames, failures, productCalls, chatCalls, runIds.Count, completed, deferred, run,
             runIds.Count, baselines, duplicates, historical, completed, options.AiShadow, current.Count(i => i.AiInvoked), options.AiShadow ? completed : 0,
             watch.Elapsed.TotalSeconds, sessionIds.Count, current.Count(i => i.State == "Uncertain"), recoveries, dispatch.JournalErrors, stateRoot,

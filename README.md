@@ -1,7 +1,19 @@
-# qnocr-poc V1.14
+# qnocr-poc V1.15
 
 独立的千牛视觉采集实验：窗口捕获 → 布局裁剪 → OCR → BuyerMessage → 统一MessageEnvelope。
 主程序使用 C# / .NET 8 / Windows；V1.0增加独立.NET Framework 4.8离线兼容性宿主，不修改qnbot。
+## V1.15 Agent Decision Layer基础架构
+
+AI Shadow现在按 `SessionContextView → IIntentClassifier → decision.json / DECISION_CREATED → 原AI适配器 → ReplyPreview` 运行。
+默认 `RuleBasedIntentClassifier` 只检查最新买家文本的有限关键词，支持商品规格、材质、发货、售后、价格、定制与OTHER；混合“刻字后能退吗”优先归售后。
+规则结果含Intent、NeedProductContext、NeedKnowledge、NeedHumanReview、RiskLevel。`Confidence=null`表示规则没有经过概率校准，不能当作模型置信度。
+`NeedKnowledge=true`只表示将来可能需要知识信息，**不查询知识库，也不修改现有Prompt、AI问题文本或MessageEnvelope**。
+
+决策单独保存在Outbox的 `decision.json`，并在运行日志 `agent-pipeline.jsonl` 写入`DECISION_CREATED`，带SessionId、MessageId、Intent、Confidence和RiskLevel。
+`ReplyPreview` 增加可选 `Decision`，同时输出只读的顶层Intent/RiskLevel；旧预览仍可读取。人工辅助视图保留原有买家身份风险字段，决策风险另显示为`DecisionRiskLevel`，避免混淆。
+分类器异常或返回非法元数据时，本条记录为`DecisionFailed / DECISION_ERROR`，AI不调用、不自动重试，后续消息继续处理。
+接口已预留，但本阶段不正式接入JEV、不建设商品库或知识库，也不作自动发送决定。验证见 [VALIDATION_V115.md](VALIDATION_V115.md)。
+
 ## V1.14 试运行Batch与人工结果标签
 
 每个 `EvaluationBatch` 绑定一个Shadow运行目录，保存BatchId、评价开始/结束时间、操作者声明的环境和操作员标签。
@@ -869,5 +881,5 @@ dotnet run 2>&1 | Tee-Object -FilePath Output/run.log
 截图和原始日志保留在本地 Output，不进入 Git。
 历史实测：V0.1 [VALIDATION.md](VALIDATION.md)，V0.2 [VALIDATION_V02.md](VALIDATION_V02.md)。
 
-V1.14已具备按Batch沉淀人工分类、原因和辅助结果；真实平台Buyer身份仍未验证，工作台不会发送消息。
+V1.15已具备独立Decision旁路与可审计的Intent元数据；真实平台Buyer身份仍未验证，工作台不会发送消息。
 UIA仍仅用于几何定位，不读取消息或商品ID文本；qnbot核心与MessageEnvelope未修改。

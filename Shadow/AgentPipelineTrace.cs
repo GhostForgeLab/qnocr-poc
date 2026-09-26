@@ -53,7 +53,16 @@ public sealed class AgentPipelineTrace(string runDirectory)
     public bool OutOfScope(DispatchItem item) => Write(new(DateTimeOffset.Now, "SESSION_OUT_OF_SCOPE", item.CaptureId ?? "",
         item.Session.SessionId, item.Session.BuyerId, item.MessageId, item.AiRequestId, null,
         item.Envelope.ProductId, 1, null, null, "Buyer session is outside explicitly selected AI test session"));
-    public bool Request(DispatchItem item, SessionContextView context, int? promptLength, string? scope, DateTimeOffset at) =>
+    public bool DecisionCreated(DispatchItem item, SessionContextView context, IntentResult decision) =>
+        Write(new(DateTimeOffset.Now, "DECISION_CREATED", item.CaptureId ?? "", item.Session.SessionId,
+            item.Session.BuyerId, item.MessageId, context.AiRequestId, null, item.Envelope.ProductId,
+            context.Messages.Count, null, null,
+            $"Rule={decision.RuleVersion}/{decision.MatchedRule}; NeedProductContext={decision.NeedProductContext}; NeedKnowledge={decision.NeedKnowledge}; NeedHumanReview={decision.NeedHumanReview}",
+            Intent: decision.IntentName, Confidence: decision.Confidence, RiskLevel: decision.RiskLevel));
+    public bool DecisionError(DispatchItem item, SessionContextView? context, string detail) =>
+        Write(new(DateTimeOffset.Now, "DECISION_ERROR", item.CaptureId ?? "", item.Session.SessionId,
+            item.Session.BuyerId, item.MessageId, context?.AiRequestId ?? item.AiRequestId, null,
+            item.Envelope.ProductId, context?.Messages.Count ?? 1, null, null, detail));    public bool Request(DispatchItem item, SessionContextView context, int? promptLength, string? scope, DateTimeOffset at) =>
         Write(new(at, "AI_REQUEST", item.CaptureId ?? "", item.Session.SessionId, item.Session.BuyerId,
             item.MessageId, context.AiRequestId, null, item.Envelope.ProductId, context.Messages.Count,
             promptLength, scope, $"ModelInputMessageCount={context.ModelInputMessageCount}"));
@@ -65,5 +74,6 @@ public sealed class AgentPipelineTrace(string runDirectory)
     public bool Preview(DispatchItem item, ReplyPreview preview) =>
         Write(new(preview.CreatedAt, "REPLY_PREVIEW_CREATED", item.CaptureId ?? "", item.Session.SessionId,
             item.Session.BuyerId, item.MessageId, preview.AiRequestId, preview.ReplyPreviewId,
-            item.Envelope.ProductId, preview.Input.Messages.Count, null, null, "SendStatus=Shadow", preview.AiResponseId));
+            item.Envelope.ProductId, preview.Input.Messages.Count, null, null, "SendStatus=Shadow", preview.AiResponseId,
+            preview.Decision?.IntentName, preview.Decision?.Confidence, preview.Decision?.RiskLevel));
 }
