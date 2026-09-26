@@ -37,6 +37,13 @@ string Frame(string name, int width = 200, int height = 100, Rectangle? patch = 
     return path;
 }
 
+if (args.Length == 1 && args[0] == "--assistant-operations-only")
+{
+    AssistantOperationsChecks.Run(Check);
+    Console.WriteLine($"Passed {passed} assistant operations checks.");
+    return 0;
+}
+
 var detector = new ChatRegionChangeDetector();
 var baseline = Frame("baseline");
 var identical = detector.Detect(baseline, baseline);
@@ -118,5 +125,6 @@ await IdentityChecks.RunAsync(Check);
 await ConfirmationChecks.RunAsync(Check);
 await StabilityChecks.RunAsync(Check);
 AssistantChecks.Run(Check);
-Console.WriteLine($"Passed {passed} checks (V0.4 through V1.12). Fixtures: {root}");
+AssistantOperationsChecks.Run(Check);
+Console.WriteLine($"Passed {passed} checks (V0.4 through V1.13). Fixtures: {root}");
 return 0;

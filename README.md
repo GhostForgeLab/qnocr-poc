@@ -1,7 +1,34 @@
-# qnocr-poc V1.12
+# qnocr-poc V1.13
 
 独立的千牛视觉采集实验：窗口捕获 → 布局裁剪 → OCR → BuyerMessage → 统一MessageEnvelope。
 主程序使用 C# / .NET 8 / Windows；V1.0增加独立.NET Framework 4.8离线兼容性宿主，不修改qnbot。
+## V1.13 真实辅助运行统计与反馈
+
+`--assist-dashboard` 按Shadow运行批次读取状态目录与该批次的 `session.json`、`health.jsonl` 或 `summary.json`，展示运行时间、帧、消息、Session、AI建议、人工编辑动作、复制动作、反馈和安全状态。
+`CaptureId`用于把共享状态目录中的预览归属到指定运行批次，避免混入旧记录。
+
+```powershell
+$stateDir = 'Output/State/your-state-dir'
+$runDir = 'Output/Shadow/shadow_本次运行目录'
+$previewId = '从--assist-list读取的ReplyPreviewId'
+$operatorId = '当前操作员标识'
+
+dotnet run -- --assist-dashboard --state-dir $stateDir --run-dir $runDir
+# 也可单独查看 --assist-stats、--assist-sessions 或 --assist-samples
+# 已复制且未改写AI文本时记录Accepted；已编辑并复制时记录Edited
+# 不采用建议时记录Rejected，可额外提供--final-text-file记录人工最终回复
+dotnet run -- --assist-feedback $previewId --state-dir $stateDir --operator $operatorId --type Rejected --final-text-file '本地UTF-8最终回复文件'
+```
+
+每个预览最多保存一次 `assistant-feedback.json`，含 `ReplyPreviewId`、原AI建议、人工最终回复与 `Accepted / Edited / Rejected` 反馈；同一文件附带精简 `ConversationSample`。
+未反馈预览在只读样本视图中标记Unreviewed且最终人工回复留空；明确反馈后才持久化 `assistant-feedback.json`。常见密钥、Bearer、手机号和邮箱会被尽力遮盖；原始 `reply-preview.json` 仍按原状态目录策略保管，人工分享或导出前仍需复核。
+可选 `--product-assessment Unknown|Correct|Incorrect` 与 `--context-assessment Unknown|Continued|Lost` 是操作者观察，不是平台证据。
+采用率、修改率、拒绝率分别为三类反馈数除以已记录反馈总数；未反馈的建议不进入分母；没有反馈时比率为null，不猜测效果。这些是人工复制/评价指标，不证明实际发送或买家采纳。
+会话列表只展示产生AI预览的Session；基线会话仍计入总数。连续性仅检查下一次预览的Context是否包含前一个买家问题及时间戳，不证明语义正确。商品ID仅是当前帧观察引用，不从历史补齐空值。
+编辑延迟是从AI预览生成到最近一次编辑的经过时间，含人工等待，不等于实际键入时长。
+辅助层不训练模型、不调用发送适配器；`SentMessages`从Shadow运行日志读取，缺少日志时显示null而不猜测为0。
+详见 [VALIDATION_V113.md](VALIDATION_V113.md)。
+
 ## V1.12 人工辅助回复工作台
 
 AI Shadow生成的 `reply-preview.json` 会新增独立 `assistant-reply.json` 侧车状态；旧预览在首次查看时按原文初始化。
@@ -816,5 +843,5 @@ dotnet run 2>&1 | Tee-Object -FilePath Output/run.log
 截图和原始日志保留在本地 Output，不进入 Git。
 历史实测：V0.1 [VALIDATION.md](VALIDATION.md)，V0.2 [VALIDATION_V02.md](VALIDATION_V02.md)。
 
-V1.12已具备Shadow回复预览和人工复制辅助；真实平台Buyer身份仍未验证，工作台不会发送消息。
+V1.13已具备按运行批次统计、人工反馈与会话样本记录；真实平台Buyer身份仍未验证，工作台不会发送消息。
 UIA仍仅用于几何定位，不读取消息或商品ID文本；qnbot核心与MessageEnvelope未修改。

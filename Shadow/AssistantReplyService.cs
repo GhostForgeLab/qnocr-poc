@@ -82,6 +82,7 @@ public sealed class AssistantReplyService(string stateRoot)
         var (folder, preview) = Find(previewId) ?? throw new FileNotFoundException("Reply preview not found.");
         using var gate = Lock(folder);
         var state = Ensure(folder, preview);
+        HoldRejectedFeedback(folder);
         if (state.Status is AssistedReplyStatuses.Approved or AssistedReplyStatuses.Copied)
             throw new InvalidOperationException("Approved or copied replies cannot be edited; create a new preview.");
         var now = DateTimeOffset.Now;
@@ -98,6 +99,7 @@ public sealed class AssistantReplyService(string stateRoot)
         var (folder, preview) = Find(previewId) ?? throw new FileNotFoundException("Reply preview not found.");
         using var gate = Lock(folder);
         var state = Ensure(folder, preview);
+        HoldRejectedFeedback(folder);
         if (state.Status is not (AssistedReplyStatuses.AiGenerated or AssistedReplyStatuses.HumanEdited))
             throw new InvalidOperationException("Reply is already approved or copied.");
         VerifyHash(state, expectedHash);
@@ -114,6 +116,7 @@ public sealed class AssistantReplyService(string stateRoot)
         var (folder, preview) = Find(previewId) ?? throw new FileNotFoundException("Reply preview not found.");
         using var gate = Lock(folder);
         var state = Ensure(folder, preview);
+        HoldRejectedFeedback(folder);
         if (state.Status != AssistedReplyStatuses.Approved)
             throw new InvalidOperationException("Only an approved reply can be copied once.");
         VerifyHash(state, expectedHash);
@@ -146,6 +149,60 @@ public sealed class AssistantReplyService(string stateRoot)
         Append(preview, state, "MANUAL_OUTCOME_RECORDED", operatorId,
             outcome + "; operator self-report only, not a verified platform receipt.");
         return View(preview, state);
+    }
+    public AssistantFeedbackRecord RecordFeedback(string previewId, string operatorId, string feedbackType,
+        string? rejectedFinalReply = null, string productAssessment = "Unknown", string contextAssessment = "Unknown")
+    {
+        ValidateOperator(operatorId);
+        if (feedbackType is not (ReplyFeedbackTypes.Accepted or ReplyFeedbackTypes.Edited or ReplyFeedbackTypes.Rejected))
+            throw new ArgumentException("Feedback must be Accepted, Edited or Rejected.", nameof(feedbackType));
+        if (productAssessment is not ("Unknown" or "Correct" or "Incorrect"))
+            throw new ArgumentException("Product assessment must be Unknown, Correct or Incorrect.", nameof(productAssessment));
+        if (contextAssessment is not ("Unknown" or "Continued" or "Lost"))
+            throw new ArgumentException("Context assessment must be Unknown, Continued or Lost.", nameof(contextAssessment));
+        if (rejectedFinalReply is { Length: > 4000 })
+            throw new ArgumentException("Final reply may contain at most 4000 characters.", nameof(rejectedFinalReply));
+        var (folder, preview) = Find(previewId) ?? throw new FileNotFoundException("Reply preview not found.");
+        using var gate = Lock(folder);
+        var state = Ensure(folder, preview);
+        var path = Path.Combine(folder, "assistant-feedback.json");
+        if (File.Exists(path)) throw new InvalidOperationException("Feedback is already recorded for this preview.");
+        if (feedbackType != ReplyFeedbackTypes.Rejected && state.Status != AssistedReplyStatuses.Copied)
+            throw new InvalidOperationException("Accepted/Edited feedback requires a copied reply; copy remains a human action.");
+        if (feedbackType == ReplyFeedbackTypes.Accepted && state.EditedReply is not null ||
+            feedbackType == ReplyFeedbackTypes.Edited && state.EditedReply is null)
+            throw new InvalidOperationException("Feedback type must match whether the AI reply was edited.");
+        if (feedbackType != ReplyFeedbackTypes.Rejected && rejectedFinalReply is not null)
+            throw new ArgumentException("Final text is derived from the copied reply for Accepted/Edited feedback.", nameof(rejectedFinalReply));
+        if (string.IsNullOrWhiteSpace(preview.Input.ProductId) && productAssessment != "Unknown")
+            throw new InvalidOperationException("Cannot assess an absent current product ID as correct or incorrect.");
+        var now = DateTimeOffset.Now;
+        var final = feedbackType == ReplyFeedbackTypes.Rejected ? rejectedFinalReply ?? "" : Effective(state);
+        var question = preview.Input.Messages.LastOrDefault(m => m.Role.Equals("buyer", StringComparison.OrdinalIgnoreCase))?.Text ?? "";
+        var safeQuestion = AssistantSampleRedactor.Redact(question);
+        var safeAi = AssistantSampleRedactor.Redact(preview.Reply);
+        var safeFinal = AssistantSampleRedactor.Redact(final);
+        var feedback = new ReplyFeedback(preview.ReplyPreviewId, preview.SessionId, safeAi, safeFinal,
+            feedbackType, now, operatorId, safeQuestion, preview.Input.ProductId, preview.Input.Messages.Count,
+            productAssessment, contextAssessment);
+        var sample = new ConversationSample(preview.ReplyPreviewId, preview.SessionId, preview.CaptureId,
+            safeQuestion, safeAi, safeFinal, feedbackType, preview.Input.ProductId,
+            (preview.Input.ProductReferences ?? Array.Empty<ProductReference>()).Select(r => r.ProductId).Distinct(StringComparer.Ordinal).ToArray(),
+            preview.Input.Messages.Count, preview.Input.CapturedAt, now);
+        var record = new AssistantFeedbackRecord(feedback, sample);
+        AtomicJson.Write(path, record);
+        Append(preview, state, "FEEDBACK_RECORDED", operatorId, feedbackType + "; local redacted sample, no model training or send action.");
+        return record;
+    }
+
+    private static void HoldRejectedFeedback(string folder)
+    {
+        var path = Path.Combine(folder, "assistant-feedback.json");
+        if (!File.Exists(path)) return;
+        var record = JsonSerializer.Deserialize<AssistantFeedbackRecord>(File.ReadAllText(path), Json)
+            ?? throw new InvalidDataException("Feedback state is unreadable.");
+        if (record.Feedback.FeedbackType == ReplyFeedbackTypes.Rejected)
+            throw new InvalidOperationException("Rejected AI suggestion cannot later be edited, approved or copied.");
     }
     private AssistedReplyState Ensure(string folder, ReplyPreview preview)
     {
@@ -210,7 +267,7 @@ public sealed class AssistantReplyService(string stateRoot)
         var item = new AssistantAuditEvent(DateTimeOffset.Now, kind, preview.ReplyPreviewId,
             preview.CaptureId, preview.SessionId, preview.AiRequestId, preview.AiResponseId,
             operatorId, state.ReplySha256, detail);
-        File.AppendAllText(AuditPath, JsonSerializer.Serialize(item) + Environment.NewLine);
+        RunLogWriter.Append(_root, Path.GetFileName(AuditPath), item);
     }
     private (string Folder, ReplyPreview Preview)? Find(string previewId)
     {

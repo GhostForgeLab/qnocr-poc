@@ -16,12 +16,41 @@ public static class AssistantCommand
             }), SentMessages = 0 }, new JsonSerializerOptions { WriteIndented = true }));
             return 0;
         }
+        if (args.Length == 5 && args[0] is "--assist-dashboard" or "--assist-stats" or "--assist-sessions" or "--assist-samples"
+            && args[1] == "--state-dir" && args[3] == "--run-dir")
+        {
+            var dashboard = new AssistantRuntimeDashboard(args[2], args[4]);
+            object result = args[0] switch
+            {
+                "--assist-stats" => dashboard.Snapshot(),
+                "--assist-sessions" => dashboard.Sessions(),
+                "--assist-samples" => dashboard.Samples(),
+                _ => new { Stats = dashboard.Snapshot(), Sessions = dashboard.Sessions(), Samples = dashboard.Samples() }
+            };
+            Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+            return 0;
+        }
         if (args.Length < 4 || args.Length % 2 != 0) { Usage(); return 2; }
         var options = new Dictionary<string, string>(StringComparer.Ordinal);
         for (var i = 2; i < args.Length; i += 2)
             if (!options.TryAdd(args[i], args[i + 1]) || string.IsNullOrWhiteSpace(args[i + 1])) { Usage(); return 2; }
         if (!options.TryGetValue("--state-dir", out var root)) { Usage(); return 2; }
         var service = new AssistantReplyService(root);
+        if (args[0] == "--assist-feedback" && options.Count is >= 3 and <= 6
+            && options.TryGetValue("--operator", out var reviewer)
+            && options.TryGetValue("--type", out var feedbackType))
+        {
+            var valid = new HashSet<string>(StringComparer.Ordinal)
+            { "--state-dir", "--operator", "--type", "--final-text-file", "--product-assessment", "--context-assessment" };
+            if (options.Keys.Any(key => !valid.Contains(key))) { Usage(); return 2; }
+            var finalText = options.TryGetValue("--final-text-file", out var finalPath) ? File.ReadAllText(finalPath) : null;
+            var feedback = service.RecordFeedback(args[1], reviewer, feedbackType, finalText,
+                options.GetValueOrDefault("--product-assessment", "Unknown"),
+                options.GetValueOrDefault("--context-assessment", "Unknown"));
+            Console.WriteLine(JsonSerializer.Serialize(new { Feedback = feedback, SentMessages = 0,
+                Note = "Human assessment only; no model training or send action." }, new JsonSerializerOptions { WriteIndented = true }));
+            return 0;
+        }
         var id = args[1];
         QnocrPoc.Models.AssistedReplyView? view;
         switch (args[0])
@@ -53,7 +82,7 @@ public static class AssistantCommand
     }
 
     private static void Usage() => Console.Error.WriteLine(
-        "Usage: --assist-list --state-dir DIR | --assist-show ID --state-dir DIR | --assist-edit ID --state-dir DIR --operator NAME --text-file FILE | " +
+        "Usage: --assist-dashboard|--assist-stats|--assist-sessions|--assist-samples --state-dir DIR --run-dir RUN | --assist-feedback ID --state-dir DIR --operator NAME --type Accepted|Edited|Rejected [--final-text-file FILE] [--product-assessment Unknown|Correct|Incorrect] [--context-assessment Unknown|Continued|Lost] | --assist-list --state-dir DIR | --assist-show ID --state-dir DIR | --assist-edit ID --state-dir DIR --operator NAME --text-file FILE | " +
         "--assist-approve ID --state-dir DIR --operator NAME --reply-sha256 SHA256 | " +
         "--assist-copy ID --state-dir DIR --operator NAME --reply-sha256 SHA256 | --assist-outcome ID --state-dir DIR --operator NAME --result PastedAndSentReported|NotSentReported. No send operation.");
 }
