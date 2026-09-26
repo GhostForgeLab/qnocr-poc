@@ -1,7 +1,17 @@
-# qnocr-poc V1.15
+# qnocr-poc V1.16
 
 独立的千牛视觉采集实验：窗口捕获 → 布局裁剪 → OCR → BuyerMessage → 统一MessageEnvelope。
 主程序使用 C# / .NET 8 / Windows；V1.0增加独立.NET Framework 4.8离线兼容性宿主，不修改qnbot。
+## V1.16 Knowledge Interface只读知识接口层
+
+AI Shadow现在按 `Decision → KnowledgeRequestBuilder → IKnowledgeProvider → 原AI适配器` 运行。默认`EmptyKnowledgeProvider`无网络或文件查询，一律返回`Success=false`、`Source=None`、`Confidence=null`、空Content和所需`MissingFields`；**不含商品事实**。
+规格中的容量问题请求`Capacity`，发货请求`ShippingTime`；材质、价格、定制和售后分别请求`Material`、`CurrentPrice`、`CustomizationPolicy`和`ReturnPolicy`。这些只是接口字段名，不是知识库模式或已录入内容。
+`ProductReference`只取当前Context可见商品ID；当前ID为空时保持null，绝不借用历史商品引用。
+
+`KNOWLEDGE_REQUEST`日志记录SessionId、Intent、ProductReference ID和NeedFields，`KNOWLEDGE_RESULT`记录Success、Source和MissingFields；不记录买家Query正文。
+Outbox仅保存`knowledge-result.json`元数据，不保存Content。新Reply Preview和人工辅助视图显示`KnowledgeStatus=Missing`；无需知识时为`NotRequired`且不调用Provider；`Available`仅为未来接口预留。
+Provider异常计入KnowledgeErrors，写入`KNOWLEDGE_ERROR`后降级为Missing，原AI仍按未修改的输入生成回复。决策与知识状态都不改变Prompt、MessageEnvelope或发送行为。
+本阶段没有商品资料录入、FAQ、RAG、向量数据库或真实知识源接入。详见 [VALIDATION_V116.md](VALIDATION_V116.md)。
 ## V1.15 Agent Decision Layer基础架构
 
 AI Shadow现在按 `SessionContextView → IIntentClassifier → decision.json / DECISION_CREATED → 原AI适配器 → ReplyPreview` 运行。
@@ -881,5 +891,5 @@ dotnet run 2>&1 | Tee-Object -FilePath Output/run.log
 截图和原始日志保留在本地 Output，不进入 Git。
 历史实测：V0.1 [VALIDATION.md](VALIDATION.md)，V0.2 [VALIDATION_V02.md](VALIDATION_V02.md)。
 
-V1.15已具备独立Decision旁路与可审计的Intent元数据；真实平台Buyer身份仍未验证，工作台不会发送消息。
+V1.16已具备只读Knowledge接口旁路与可审计的缺失状态；真实平台Buyer身份仍未验证，工作台不会发送消息。
 UIA仍仅用于几何定位，不读取消息或商品ID文本；qnbot核心与MessageEnvelope未修改。

@@ -4,6 +4,7 @@ using QnocrPoc.Adapter;
 using QnocrPoc.Capture;
 using QnocrPoc.Detection;
 using QnocrPoc.Layout;
+using QnocrPoc.Knowledge;
 using QnocrPoc.Messages;
 using QnocrPoc.Models;
 using QnocrPoc.Product;
@@ -22,7 +23,7 @@ public sealed record ShadowRunSummary(string Status, int Attempts, int Successfu
     bool SendEnabled = false, int SentMessages = 0, DateTimeOffset StartedAt = default, DateTimeOffset EndedAt = default,
     long PeakWorkingSetBytes = 0, int ProductReferences = 0, int ActiveSessions = 0, int InactiveSessions = 0,
     int ClosedSessions = 0, int ReopenedSessions = 0, int ConfirmedObservations = 0, int ErrorCount = 0,
-    long RunBytes = 0, long StateBytes = 0, int LogArchiveSegments = 0, int PersistedSessions = 0);
+    long RunBytes = 0, long StateBytes = 0, int LogArchiveSegments = 0, int PersistedSessions = 0, int KnowledgeErrors = 0);
 
 public sealed class QnocrShadowRunner
 {
@@ -31,12 +32,15 @@ public sealed class QnocrShadowRunner
     private readonly Func<string, OcrResult>? _ocr;
     private readonly Func<string, string?, string, CancellationToken, Task<ShadowAdapterResult>>? _adapt;
     private readonly Func<DateTime> _displayNow;
+    private readonly IKnowledgeProvider? _knowledgeProvider;
     public QnocrShadowRunner(Func<string, Task<CaptureResult>>? capture = null,
         Func<string, QianniuWindow?, Task<ResolvedLayout>>? layout = null, Func<string, OcrResult>? ocr = null,
-        Func<string, string?, string, CancellationToken, Task<ShadowAdapterResult>>? adapt = null, Func<DateTime>? displayNow = null)
+        Func<string, string?, string, CancellationToken, Task<ShadowAdapterResult>>? adapt = null, Func<DateTime>? displayNow = null,
+        IKnowledgeProvider? knowledgeProvider = null)
     {
         _capture = capture; _layout = layout ?? new QianniuLayoutResolver().ResolveAsync; _ocr = ocr; _adapt = adapt;
         _displayNow = displayNow ?? (() => TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, TimeZoneInfo.FindSystemTimeZoneById("China Standard Time")));
+        _knowledgeProvider = knowledgeProvider;
     }
 
     public async Task<ShadowRunSummary> RunAsync(ShadowRunOptions options, CancellationToken token = default)
@@ -73,7 +77,8 @@ public sealed class QnocrShadowRunner
         using var dispatch = new DurableShadowDispatch(stateRoot, Path.Combine(run, "lifecycle.jsonl"), token,
             _adapt ?? (options.AiShadow
                 ? new AgentShadowClient(options.AiProviderConfigPath).ConvertAsync
-                : new ShadowAdapterClient(dispatch: true).ConvertAsync), options.AiShadow, agentTrace);
+                : new ShadowAdapterClient(dispatch: true).ConvertAsync), options.AiShadow, agentTrace,
+            knowledgeProvider: _knowledgeProvider);
         dispatch.Start();
         var startedAt = DateTimeOffset.Now;
         var watch = Stopwatch.StartNew(); var nextHeartbeat = TimeSpan.Zero; var peakWorkingSet = 0L; var confirmedObservations = 0;
@@ -83,11 +88,11 @@ public sealed class QnocrShadowRunner
         var runIds = new HashSet<string>(StringComparer.Ordinal); var sessionIds = new HashSet<string>(StringComparer.Ordinal);
         var outOfScopeMessages = 0;
         var status = "Completed";
-        AtomicJson.Write(Path.Combine(run, "session.json"), new { Version = "1.15", StartedAt = startedAt, StateDirectory = stateRoot,
+        AtomicJson.Write(Path.Combine(run, "session.json"), new { Version = "1.16", StartedAt = startedAt, StateDirectory = stateRoot,
             options.MaximumFrames, options.MaximumMinutes, options.MaxRunMegabytes, options.MaxStateMegabytes, AiEnabled = options.AiShadow, SendEnabled = false,
             AllowedAiSession = allowedAiSession, ProviderConfig = options.AiProviderConfigPath ?? "Config/ai-provider.json",
             Identity = "Per-buyer OCR label sessions; test identities are isolated, no platform identity inference" });
-        Console.WriteLine($"[SHADOW V1.15] Session: {run}\nState: {stateRoot}\nAI={(options.AiShadow ? "ON" : "OFF")}; Send=OFF; first buyer snapshot is baseline. stop.request stops cleanly.");
+        Console.WriteLine($"[SHADOW V1.16] Session: {run}\nState: {stateRoot}\nAI={(options.AiShadow ? "ON" : "OFF")}; Send=OFF; first buyer snapshot is baseline. stop.request stops cleanly.");
         Console.WriteLine($"[Shadow Flags] AI_ENABLED={options.AiShadow.ToString().ToLowerInvariant()} SEND_ENABLED=false");
         try
         {
@@ -255,7 +260,7 @@ public sealed class QnocrShadowRunner
                     }
                     var aiCalls = currentItems.Sum(i => i.AiCalls);
                     var previews = currentItems.Count(i => i.AiEnabled && i.State == "Completed");
-                    var errors = failures + recoveries + dispatch.JournalErrors + agentTrace.Errors
+                    var errors = failures + recoveries + dispatch.JournalErrors + agentTrace.Errors + dispatch.KnowledgeErrors
                         + currentItems.Count(i => i.State is "AiFailed" or "Uncertain" or "DecisionFailed");
                     var persistedSessionsNow = Directory.Exists(Path.Combine(stateRoot, "sessions"))
                         ? Directory.EnumerateDirectories(Path.Combine(stateRoot, "sessions")).Count() : 0;
@@ -265,6 +270,7 @@ public sealed class QnocrShadowRunner
                         BuyerSessions = sessionMetrics.Observed, PersistedSessions = persistedSessionsNow,
                         sessionMetrics.Active, sessionMetrics.Inactive, sessionMetrics.Closed, sessionMetrics.Reopened,
                         ProductReferences = sessionMetrics.ProductReferences, AiCalls = aiCalls, ReplyPreviews = previews,
+                        KnowledgeErrors = dispatch.KnowledgeErrors,
                         ErrorCount = errors, Pending = currentItems.Count(i => i.State is "Pending" or "Dispatching"),
                         Uncertain = currentItems.Count(i => i.State == "Uncertain"),
                         WorkingSetBytes = process.WorkingSet64, PeakWorkingSetBytes = peakWorkingSet,
@@ -308,7 +314,7 @@ public sealed class QnocrShadowRunner
         var archiveSegments = Directory.Exists(archives) ? Directory.EnumerateFiles(archives, "*.jsonl").Count() : 0;
         var persistedSessions = Directory.Exists(Path.Combine(stateRoot, "sessions"))
             ? Directory.EnumerateDirectories(Path.Combine(stateRoot, "sessions")).Count() : 0;
-        var errorCount = failures + recoveries + dispatch.JournalErrors + agentTrace.Errors
+        var errorCount = failures + recoveries + dispatch.JournalErrors + agentTrace.Errors + dispatch.KnowledgeErrors
             + current.Count(i => i.State is "AiFailed" or "Uncertain" or "DecisionFailed");
         var summary = new ShadowRunSummary(status, attempts, frames, failures, productCalls, chatCalls, runIds.Count, completed, deferred, run,
             runIds.Count, baselines, duplicates, historical, completed, options.AiShadow, current.Count(i => i.AiInvoked), options.AiShadow ? completed : 0,
@@ -319,7 +325,8 @@ public sealed class QnocrShadowRunner
             InactiveSessions: sessionStats.Inactive, ClosedSessions: sessionStats.Closed,
             ReopenedSessions: sessionStats.Reopened, ConfirmedObservations: confirmedObservations,
             ErrorCount: errorCount, RunBytes: runSize, StateBytes: stateSize,
-            LogArchiveSegments: archiveSegments, PersistedSessions: persistedSessions);
+            LogArchiveSegments: archiveSegments, PersistedSessions: persistedSessions,
+            KnowledgeErrors: dispatch.KnowledgeErrors);
         AtomicJson.Write(Path.Combine(run, "summary.json"), summary);
         Console.WriteLine($"[Shadow] stopped: {JsonSerializer.Serialize(summary)}");
         return summary;

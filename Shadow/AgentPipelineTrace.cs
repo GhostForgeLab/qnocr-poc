@@ -62,7 +62,35 @@ public sealed class AgentPipelineTrace(string runDirectory)
     public bool DecisionError(DispatchItem item, SessionContextView? context, string detail) =>
         Write(new(DateTimeOffset.Now, "DECISION_ERROR", item.CaptureId ?? "", item.Session.SessionId,
             item.Session.BuyerId, item.MessageId, context?.AiRequestId ?? item.AiRequestId, null,
-            item.Envelope.ProductId, context?.Messages.Count ?? 1, null, null, detail));    public bool Request(DispatchItem item, SessionContextView context, int? promptLength, string? scope, DateTimeOffset at) =>
+            item.Envelope.ProductId, context?.Messages.Count ?? 1, null, null, detail));
+    public bool KnowledgeRequested(DispatchItem item, SessionContextView context,
+        KnowledgeRequest request) =>
+        Write(new(DateTimeOffset.Now, "KNOWLEDGE_REQUEST", item.CaptureId ?? "", item.Session.SessionId,
+            item.Session.BuyerId, item.MessageId, context.AiRequestId, null, item.Envelope.ProductId,
+            context.Messages.Count, null, null, "Read-only provider lookup requested; query text omitted",
+            Intent: request.Intent, ProductReference: request.ProductReference?.ProductId,
+            NeedFields: request.NeedFields));
+    public bool KnowledgeResolved(DispatchItem item, SessionContextView context,
+        KnowledgeRequest request, KnowledgeResult result) =>
+        Write(new(DateTimeOffset.Now, "KNOWLEDGE_RESULT", item.CaptureId ?? "", item.Session.SessionId,
+            item.Session.BuyerId, item.MessageId, context.AiRequestId, null, item.Envelope.ProductId,
+            context.Messages.Count, null, null, "Knowledge content is not added to AI input",
+            Intent: request.Intent, Source: result.Source, Success: result.Success,
+            ProductReference: request.ProductReference?.ProductId,
+            NeedFields: request.NeedFields, MissingFields: result.MissingFields));
+    public bool KnowledgeError(DispatchItem item, SessionContextView context,
+        KnowledgeRequest request, string errorType) =>
+        Write(new(DateTimeOffset.Now, "KNOWLEDGE_ERROR", item.CaptureId ?? "", item.Session.SessionId,
+            item.Session.BuyerId, item.MessageId, context.AiRequestId, null, item.Envelope.ProductId,
+            context.Messages.Count, null, null, errorType + "; AI continues without knowledge",
+            Intent: request.Intent, ProductReference: request.ProductReference?.ProductId,
+            NeedFields: request.NeedFields));
+    public bool KnowledgeSkipped(DispatchItem item, SessionContextView context, IntentResult decision) =>
+        Write(new(DateTimeOffset.Now, "KNOWLEDGE_SKIPPED", item.CaptureId ?? "", item.Session.SessionId,
+            item.Session.BuyerId, item.MessageId, context.AiRequestId, null, item.Envelope.ProductId,
+            context.Messages.Count, null, null, "NeedKnowledge=false; provider not called",
+            Intent: decision.IntentName));
+    public bool Request(DispatchItem item, SessionContextView context, int? promptLength, string? scope, DateTimeOffset at) =>
         Write(new(at, "AI_REQUEST", item.CaptureId ?? "", item.Session.SessionId, item.Session.BuyerId,
             item.MessageId, context.AiRequestId, null, item.Envelope.ProductId, context.Messages.Count,
             promptLength, scope, $"ModelInputMessageCount={context.ModelInputMessageCount}"));
@@ -74,6 +102,6 @@ public sealed class AgentPipelineTrace(string runDirectory)
     public bool Preview(DispatchItem item, ReplyPreview preview) =>
         Write(new(preview.CreatedAt, "REPLY_PREVIEW_CREATED", item.CaptureId ?? "", item.Session.SessionId,
             item.Session.BuyerId, item.MessageId, preview.AiRequestId, preview.ReplyPreviewId,
-            item.Envelope.ProductId, preview.Input.Messages.Count, null, null, "SendStatus=Shadow", preview.AiResponseId,
+            item.Envelope.ProductId, preview.Input.Messages.Count, null, null, "SendStatus=Shadow; KnowledgeStatus=" + (preview.KnowledgeStatus ?? "UnknownLegacy"), preview.AiResponseId,
             preview.Decision?.IntentName, preview.Decision?.Confidence, preview.Decision?.RiskLevel));
 }

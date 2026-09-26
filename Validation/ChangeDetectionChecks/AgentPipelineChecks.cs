@@ -51,6 +51,12 @@ internal static class AgentPipelineChecks
                 var decision = JsonSerializer.Deserialize<IntentResult>(File.ReadAllText(Path.Combine(folder, "decision.json")));
                 check(decision?.IntentName == "CUSTOMIZATION_QUERY" && decision.NeedProductContext && decision.NeedKnowledge,
                     "decision sidecar is durable before unchanged AI adapter invocation");
+                using var knowledgeDoc = JsonDocument.Parse(File.ReadAllText(Path.Combine(folder, "knowledge-result.json")));
+                check(knowledgeDoc.RootElement.GetProperty("Status").GetString() == KnowledgeStatuses.Missing &&
+                    knowledgeDoc.RootElement.GetProperty("Source").GetString() == "None" &&
+                    knowledgeDoc.RootElement.GetProperty("MissingFields")[0].GetString() == "CustomizationPolicy" &&
+                    !knowledgeDoc.RootElement.TryGetProperty("Content", out _),
+                    "EmptyKnowledgeProvider reports missing fields before unchanged AI adapter call without persisting content");
                 check(!File.ReadAllText(Path.Combine(folder, "context.json")).Contains("\"Decision\"") &&
                     !File.ReadAllText(envelopePath).Contains("\"Decision\""),
                     "decision metadata does not modify model context or MessageEnvelope input");
@@ -72,14 +78,16 @@ internal static class AgentPipelineChecks
                 "preview carries capture, request, response and preview IDs with fixed Shadow send status");
             var assistant = new AssistantReplyService(Path.Combine(root, "success-state")).Show(preview.ReplyPreviewId);
             check(assistant?.Status == AssistedReplyStatuses.AiGenerated && assistant.AiReply == preview.Reply
-                && assistant.Decision?.IntentName == "CUSTOMIZATION_QUERY" && assistant.DecisionRiskLevel == "Medium"
+                && assistant.Decision?.IntentName == "CUSTOMIZATION_QUERY" && assistant.DecisionRiskLevel == "Medium" &&
+                assistant.KnowledgeStatus == KnowledgeStatuses.Missing
                 && File.Exists(Path.Combine(root, "success-state", "outbox", latest.MessageId, "assistant-reply.json")),
                 "Agent preview automatically initializes durable assistant review without a send action");
         }
         var successEvents = File.ReadAllLines(Path.Combine(root, "agent-pipeline.jsonl")).Select(s => JsonDocument.Parse(s).RootElement.Clone()).ToArray();
         check(successEvents.Select(e => e.GetProperty("Event").GetString()).SequenceEqual(new[]
             { "MESSAGE_CAPTURED", "SESSION_CREATED", "BUYER_BOUND", "PRODUCT_REFERENCE_BOUND", "MESSAGE_ATTACHED",
-                "SESSION_UPDATED", "DECISION_CREATED", "AI_REQUEST", "AI_RESPONSE", "REPLY_PREVIEW_CREATED" }),
+                "SESSION_UPDATED", "DECISION_CREATED", "KNOWLEDGE_REQUEST", "KNOWLEDGE_RESULT",
+                "AI_REQUEST", "AI_RESPONSE", "REPLY_PREVIEW_CREATED" }),
             "one message follows the complete ordered Agent lifecycle");
         check(successEvents.All(e => e.GetProperty("CaptureId").GetString() == latest.CaptureId
             && e.GetProperty("SessionId").GetString() == sid && e.GetProperty("AiRequestId").GetString() == latest.AiRequestId),
@@ -90,6 +98,16 @@ internal static class AgentPipelineChecks
             decisionEvent.GetProperty("Confidence").ValueKind == JsonValueKind.Null &&
             decisionEvent.GetProperty("MessageId").GetString() == latest.MessageId,
             "DECISION_CREATED logs session/message, intent, uncalibrated confidence and risk before AI request");
+        var knowledgeRequestEvent = successEvents.Single(e => e.GetProperty("Event").GetString() == "KNOWLEDGE_REQUEST");
+        var knowledgeResultEvent = successEvents.Single(e => e.GetProperty("Event").GetString() == "KNOWLEDGE_RESULT");
+        check(knowledgeRequestEvent.GetProperty("SessionId").GetString() == sid &&
+            knowledgeRequestEvent.GetProperty("Intent").GetString() == "CUSTOMIZATION_QUERY" &&
+            knowledgeRequestEvent.GetProperty("ProductReference").GetString() == "1051087533910" &&
+            knowledgeRequestEvent.GetProperty("NeedFields")[0].GetString() == "CustomizationPolicy" &&
+            knowledgeResultEvent.GetProperty("Success").GetBoolean() == false &&
+            knowledgeResultEvent.GetProperty("Source").GetString() == "None" &&
+            knowledgeResultEvent.GetProperty("MissingFields")[0].GetString() == "CustomizationPolicy",
+            "knowledge trace records request identity/fields and missing result without buyer query or key");
         check(successEvents.Single(e => e.GetProperty("Event").GetString() == "AI_REQUEST").GetProperty("PromptLength").GetInt32() == 26,
             "AI_REQUEST logs actual reported model question length without API key");
         var responseId = successEvents.Single(e => e.GetProperty("Event").GetString() == "AI_RESPONSE")
@@ -97,8 +115,9 @@ internal static class AgentPipelineChecks
         check(!string.IsNullOrEmpty(responseId) && successEvents.Single(e => e.GetProperty("Event").GetString() == "REPLY_PREVIEW_CREATED")
             .GetProperty("AiResponseId").GetString() == responseId,
             "AI response ID joins the response and preview audit records");
-        check(!File.ReadAllText(Path.Combine(root, "agent-pipeline.jsonl")).Contains("ApiKey", StringComparison.OrdinalIgnoreCase),
-            "lifecycle audit contains no key/configuration field");
+        check(!File.ReadAllText(Path.Combine(root, "agent-pipeline.jsonl")).Contains("ApiKey", StringComparison.OrdinalIgnoreCase) &&
+            !File.ReadAllText(Path.Combine(root, "agent-pipeline.jsonl")).Contains("可以刻字吗", StringComparison.Ordinal),
+            "lifecycle audit contains no key/configuration or buyer query text");
 
         var failure = latest with { MessageId = new string('5', 64), AiRequestId = MessageFingerprint.AiRequestId(new string('5', 64)) };
         using (var box = new DurableShadowDispatch(Path.Combine(root, "failure-state"), Path.Combine(root, "failure-life.jsonl"), CancellationToken.None,

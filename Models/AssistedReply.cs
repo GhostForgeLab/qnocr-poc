@@ -22,7 +22,7 @@ public sealed record AssistedReplyView(string ReplyPreviewId, string SessionId, 
     DateTimeOffset? EditedAt, string? EditedBy, DateTimeOffset? ApprovedAt, string? ApprovedBy,
     DateTimeOffset? CopiedAt, string? CopiedBy, string SendStatus,
     string? ManualOutcome, DateTimeOffset? OutcomeAt, string? OutcomeBy,
-    IntentResult? Decision = null)
+    IntentResult? Decision = null, string? KnowledgeStatus = null)
 {
     public string? DecisionIntent => Decision?.IntentName;
     public string? DecisionRiskLevel => Decision?.RiskLevel;

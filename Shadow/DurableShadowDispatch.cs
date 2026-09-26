@@ -1,6 +1,7 @@
 using System.Text.Json;
 using QnocrPoc.Models;
 using QnocrPoc.Decision;
+using QnocrPoc.Knowledge;
 
 namespace QnocrPoc.Shadow;
 
@@ -22,17 +23,21 @@ public sealed class DurableShadowDispatch : IDisposable
     private readonly bool? _aiMode;
     private readonly AgentPipelineTrace? _agentTrace;
     private readonly IIntentClassifier _intentClassifier;
+    private readonly IKnowledgeProvider _knowledgeProvider;
     private Task? _worker;
     private volatile bool _stopping;
     public int JournalErrors { get; private set; }
     public int CorruptStateFiles { get; private set; }
+    public int KnowledgeErrors { get; private set; }
 
     public DurableShadowDispatch(string root, string journal, CancellationToken token,
         Func<string, string?, string, CancellationToken, Task<ShadowAdapterResult>> send, bool? aiMode = null,
-        AgentPipelineTrace? agentTrace = null, IIntentClassifier? intentClassifier = null)
+        AgentPipelineTrace? agentTrace = null, IIntentClassifier? intentClassifier = null,
+        IKnowledgeProvider? knowledgeProvider = null)
     {
         _root = Path.GetFullPath(root); _journal = journal; _token = token; _send = send; _aiMode = aiMode;
         _agentTrace = agentTrace; _intentClassifier = intentClassifier ?? new RuleBasedIntentClassifier();
+        _knowledgeProvider = knowledgeProvider ?? new EmptyKnowledgeProvider();
         Directory.CreateDirectory(_root);
         _lock = new FileStream(Path.Combine(_root, "agent.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
         foreach (var file in Directory.EnumerateFiles(_root, "item.json", SearchOption.AllDirectories))
@@ -117,6 +122,7 @@ public sealed class DurableShadowDispatch : IDisposable
                 ShadowAdapterResult result;
                 SessionContextView? context = null;
                 IntentResult? decision = null;
+                var knowledgeStatus = KnowledgeStatuses.NotRequired;
                 DateTimeOffset requestedAt = default;
                 try
                 {
@@ -145,6 +151,44 @@ public sealed class DurableShadowDispatch : IDisposable
                             continue;
                         }
                     }
+                    if (context is not null && decision is not null)
+                    {
+                        if (decision.NeedKnowledge)
+                        {
+                            var request = KnowledgeRequestBuilder.Build(context, decision);
+                            _agentTrace?.KnowledgeRequested(item, context, request);
+                            KnowledgeResult knowledge;
+                            try
+                            {
+                                knowledge = await _knowledgeProvider.GetAsync(request, _token);
+                                if (knowledge is null || string.IsNullOrWhiteSpace(knowledge.Source) ||
+                                    knowledge.MissingFields is null ||
+                                    knowledge.Confidence is { } confidence && (!double.IsFinite(confidence) || confidence is < 0 or > 1) ||
+                                    knowledge.Success && string.IsNullOrWhiteSpace(knowledge.Content))
+                                    throw new InvalidDataException("Knowledge provider returned invalid metadata.");
+                            }
+                            catch (Exception ex) when (ex is not OperationCanceledException)
+                            {
+                                KnowledgeErrors++;
+                                _agentTrace?.KnowledgeError(item, context, request, ex.GetType().Name);
+                                knowledge = new KnowledgeResult(false, "None", null, "", request.NeedFields);
+                            }
+                            knowledgeStatus = knowledge.Success && knowledge.MissingFields.Count == 0
+                                ? KnowledgeStatuses.Available : KnowledgeStatuses.Missing;
+                            try
+                            {
+                                AtomicJson.Write(Path.Combine(Folder(item), "knowledge-result.json"), new
+                                { knowledge.Success, knowledge.Source, knowledge.Confidence, knowledge.MissingFields, Status = knowledgeStatus });
+                            }
+                            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                            {
+                                KnowledgeErrors++;
+                                _agentTrace?.KnowledgeError(item, context, request, ex.GetType().Name + "; metadata persistence failed");
+                            }
+                            _agentTrace?.KnowledgeResolved(item, context, request, knowledge);
+                        }
+                        else _agentTrace?.KnowledgeSkipped(item, context, decision);
+                    }
                     requestedAt = DateTimeOffset.Now;
                     result = await _send(Path.Combine(Folder(item), "envelope.json"), item.Session.IdentityPath,
                         Path.Combine(Folder(item), $"attempt_{item.Attempts:D4}"), _token);
@@ -172,7 +216,7 @@ public sealed class DurableShadowDispatch : IDisposable
                     if (result.Status == "Converted")
                     {
                         var preview = new ReplyPreview(item.Session.SessionId, item.Session.BuyerId, context, result.ReplySuggestion!,
-                            null, DateTimeOffset.Now, "Shadow", item.CaptureId ?? "", context.AiRequestId, aiResponseId!, Guid.NewGuid().ToString("N"), decision);
+                            null, DateTimeOffset.Now, "Shadow", item.CaptureId ?? "", context.AiRequestId, aiResponseId!, Guid.NewGuid().ToString("N"), decision, knowledgeStatus);
                         try
                         {
                             AtomicJson.Write(Path.Combine(Folder(item), "reply-preview.json"), preview);

@@ -19,7 +19,8 @@ public sealed record SessionContextView(string SessionId, string BuyerId, string
 /// <summary>Model confidence is unavailable until a calibrated score exists; never invent a probability.</summary>
 public sealed record ReplyPreview(string SessionId, string BuyerId, SessionContextView Input, string Reply,
     double? Confidence, DateTimeOffset CreatedAt, string SendStatus, string CaptureId, string AiRequestId,
-    string AiResponseId, string ReplyPreviewId, IntentResult? Decision = null)
+    string AiResponseId, string ReplyPreviewId, IntentResult? Decision = null,
+    string? KnowledgeStatus = null)
 {
     public string? Intent => Decision?.IntentName;
     public string? RiskLevel => Decision?.RiskLevel;
@@ -28,4 +29,7 @@ public sealed record ReplyPreview(string SessionId, string BuyerId, SessionConte
 public sealed record AgentPipelineEvent(DateTimeOffset Timestamp, string Event, string CaptureId,
     string? SessionId, string? BuyerId, string? MessageId, string? AiRequestId, string? ReplyPreviewId,
     string ProductId, int MessageCount, int? PromptLength, string? PromptLengthScope, string? Detail,
-    string? AiResponseId = null, string? Intent = null, double? Confidence = null, string? RiskLevel = null);
+    string? AiResponseId = null, string? Intent = null, double? Confidence = null, string? RiskLevel = null,
+    string? Source = null, bool? Success = null,
+    string? ProductReference = null, IReadOnlyList<string>? NeedFields = null,
+    IReadOnlyList<string>? MissingFields = null);
