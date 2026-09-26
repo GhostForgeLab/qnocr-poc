@@ -1,7 +1,20 @@
-# qnocr-poc V1.10
+# qnocr-poc V1.11-A
 
 独立的千牛视觉采集实验：窗口捕获 → 布局裁剪 → OCR → BuyerMessage → 统一MessageEnvelope。
 主程序使用 C# / .NET 8 / Windows；V1.0增加独立.NET Framework 4.8离线兼容性宿主，不修改qnbot。
+## V1.11-A 真实买家身份绑定前置层
+
+当前OCR聊天头只提供买家显示标签，不提供平台BuyerId或ConversationId。`SessionRegistry`把它与显式映射组成Session；
+`buyer-test:*`仍是隔离测试身份，持久状态标记`Mapped`、`IsTest=true`，绝不自动升级为`Verified`。
+`BuyerIdentity`记录BuyerId、来源、可信度、捕获时间、SessionId和状态（Unknown/Observed/Mapped/Verified）。
+只有独立可信qnbot运行时证据能把非测试Session提升为Verified；默认可信来源不可用。
+`CanSendToBuyer`要求Verified、精确Session/Buyer匹配、非测试身份、平台会话证据与5分钟内新鲜验证，否则qnbot发送适配器拒绝。
+新的OCR观察或验证失败会撤销先前Verified，避免沿用陈旧授权。
+
+本轮真实千牛会话只有OCR昵称与测试映射，缺少独立平台身份来源，**真实状态尚未达到Verified，Send继续OFF**。
+合成可信来源的正向检查只验证绑定机制，不代表真实买家身份验证。
+来源链分析见 [docs/BUYER_IDENTITY_CHAIN_V111A.md](docs/BUYER_IDENTITY_CHAIN_V111A.md)，
+编译、回归与边界结果见 [VALIDATION_V111A.md](VALIDATION_V111A.md)。
 ## V1.10 长时间运行稳定性
 
 `--shadow` 每分钟记录运行时间、帧/消息、Session和ProductReference数量、AI调用、回复预览、错误、内存与磁盘占用。
