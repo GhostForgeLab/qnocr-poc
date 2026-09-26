@@ -91,6 +91,11 @@ internal static class ShadowChecks
             check(r.GetProperty("CoordinatorCreated").GetBoolean() && r.GetProperty("ForbiddenBusinessCalls").GetInt32() == 0 && r.GetProperty("SentMessages").GetInt32() == 0 && r.GetProperty("SourceFilesVerified").GetInt32() == 6,
                 "adapter enters original coordinator with verified source and zero send/business calls");
         }
+        count = 0;
+        var capped = await Runner().RunAsync(Options(4, mapping) with { MaxRunMegabytes = 0.0001 });
+        check(capped.Status == "StorageLimitReached" && capped.Attempts == 1 && capped.SentMessages == 0
+            && File.Exists(Path.Combine(capped.SessionDirectory, "summary.json")),
+            "run output quota stops safely without deleting audit evidence");
         count = 0; noProduct = true;
         var empty = await Runner().RunAsync(Options(2, mapping));
         using (var doc = JsonDocument.Parse(File.ReadAllText(Directory.GetFiles(empty.SessionDirectory, "envelope_*.json", SearchOption.AllDirectories).Single())))

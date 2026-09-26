@@ -77,7 +77,7 @@ public sealed class DurableShadowDispatch : IDisposable
             item.AiEnabled ? item.AiInvoked ? "Invoked" : "EnabledNotConfirmed" : "OFF", item.Attempts, detail);
         lock (_gate)
         {
-            try { Directory.CreateDirectory(Path.GetDirectoryName(_journal)!); File.AppendAllText(_journal, JsonSerializer.Serialize(entry) + Environment.NewLine); }
+            try { Directory.CreateDirectory(Path.GetDirectoryName(_journal)!); RunLogWriter.Append(Path.GetDirectoryName(_journal)!, Path.GetFileName(_journal), entry); }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { JournalErrors++; Console.WriteLine($"[Recovery] lifecycle log unavailable; durable state remains authoritative: {item.MessageId} {stage}"); }
         }
     }

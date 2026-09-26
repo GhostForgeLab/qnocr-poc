@@ -14,7 +14,7 @@ public sealed class AgentPipelineTrace(string runDirectory)
         {
             try
             {
-                File.AppendAllText(Path.Combine(runDirectory, "agent-pipeline.jsonl"), JsonSerializer.Serialize(item) + Environment.NewLine);
+                RunLogWriter.Append(runDirectory, "agent-pipeline.jsonl", item);
                 return true;
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)

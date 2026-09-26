@@ -12,14 +12,17 @@ namespace QnocrPoc.Shadow;
 
 public sealed record ShadowRunOptions(int? MaximumFrames = null, int IntervalMilliseconds = 1000, string? IdentityMappingPath = null,
     bool AiShadow = false, double? MaximumMinutes = null, string? StateDirectory = null, string? AiSessionId = null,
-    string? AiProviderConfigPath = null);
+    string? AiProviderConfigPath = null, double MaxRunMegabytes = 1024, double MaxStateMegabytes = 4096);
 public sealed record ShadowRunSummary(string Status, int Attempts, int SuccessfulFrames, int FailedFrames,
     int ProductOcrCalls, int ChatOcrCalls, int Envelopes, int ConvertedEnvelopes, int DeferredEnvelopes, string SessionDirectory,
     int NewMessages, int BaselineMessages, int DuplicateObservations, int HistoricalObservations, int ConvertedMessages,
     bool AiEnabled = false, int AiInvokedResults = 0, int ReplyPreviews = 0, double ElapsedSeconds = 0,
     int BuyerSessions = 0, int UncertainMessages = 0, int RecoveryEvents = 0, int JournalErrors = 0, string? StateDirectory = null,
     int OutOfScopeMessages = 0, int EmptyReplies = 0, int AiErrors = 0, int AiCalls = 0,
-    bool SendEnabled = false, int SentMessages = 0);
+    bool SendEnabled = false, int SentMessages = 0, DateTimeOffset StartedAt = default, DateTimeOffset EndedAt = default,
+    long PeakWorkingSetBytes = 0, int ProductReferences = 0, int ActiveSessions = 0, int InactiveSessions = 0,
+    int ClosedSessions = 0, int ReopenedSessions = 0, int ConfirmedObservations = 0, int ErrorCount = 0,
+    long RunBytes = 0, long StateBytes = 0, int LogArchiveSegments = 0, int PersistedSessions = 0);
 
 public sealed class QnocrShadowRunner
 {
@@ -39,7 +42,9 @@ public sealed class QnocrShadowRunner
     public async Task<ShadowRunSummary> RunAsync(ShadowRunOptions options, CancellationToken token = default)
     {
         if (options.MaximumFrames is <= 0 || options.IntervalMilliseconds is < 0 or > 60000 || options.MaximumMinutes is <= 0
-            || options.MaximumMinutes is { } minutes && !double.IsFinite(minutes)) throw new ArgumentOutOfRangeException(nameof(options));
+            || options.MaximumMinutes is { } minutes && !double.IsFinite(minutes)
+            || !double.IsFinite(options.MaxRunMegabytes) || options.MaxRunMegabytes <= 0
+            || !double.IsFinite(options.MaxStateMegabytes) || options.MaxStateMegabytes <= 0) throw new ArgumentOutOfRangeException(nameof(options));
         token.ThrowIfCancellationRequested();
         if (options.AiShadow && options.IdentityMappingPath is null) throw new InvalidDataException("AI Shadow requires an explicit test mapping.");
         if (options.AiShadow && (options.AiSessionId is null || options.AiSessionId.Length != 64 || !options.AiSessionId.All(Uri.IsHexDigit)))
@@ -59,6 +64,7 @@ public sealed class QnocrShadowRunner
             mapping = Path.Combine(run, "identity.snapshot.json"); File.WriteAllText(mapping, json);
         }
         var registry = new SessionRegistry(stateRoot, run, mapping);
+        var lifecycle = new SessionRunLifecycle(stateRoot, run);
         var agentTrace = new AgentPipelineTrace(run);
         var native = new NativeWorkerClient();
         var windowCapture = new QianniuWindowCapture();
@@ -69,18 +75,19 @@ public sealed class QnocrShadowRunner
                 ? new AgentShadowClient(options.AiProviderConfigPath).ConvertAsync
                 : new ShadowAdapterClient(dispatch: true).ConvertAsync), options.AiShadow, agentTrace);
         dispatch.Start();
-        var watch = Stopwatch.StartNew(); var nextHeartbeat = TimeSpan.Zero;
+        var startedAt = DateTimeOffset.Now;
+        var watch = Stopwatch.StartNew(); var nextHeartbeat = TimeSpan.Zero; var peakWorkingSet = 0L; var confirmedObservations = 0;
         QianniuWindow? window = null; string? selectedTitle = null; string? previousChat = null;
         QianniuLayout? previousLayout = null;
         var attempts = 0; var frames = 0; var failures = 0; var productCalls = 0; var chatCalls = 0; var baselines = 0; var duplicates = 0; var historical = 0; var recoveries = 0; var consecutiveFailures = 0;
         var runIds = new HashSet<string>(StringComparer.Ordinal); var sessionIds = new HashSet<string>(StringComparer.Ordinal);
         var outOfScopeMessages = 0;
         var status = "Completed";
-        AtomicJson.Write(Path.Combine(run, "session.json"), new { Version = "1.9", StartedAt = DateTimeOffset.Now, StateDirectory = stateRoot,
-            options.MaximumFrames, options.MaximumMinutes, AiEnabled = options.AiShadow, SendEnabled = false,
+        AtomicJson.Write(Path.Combine(run, "session.json"), new { Version = "1.10", StartedAt = startedAt, StateDirectory = stateRoot,
+            options.MaximumFrames, options.MaximumMinutes, options.MaxRunMegabytes, options.MaxStateMegabytes, AiEnabled = options.AiShadow, SendEnabled = false,
             AllowedAiSession = allowedAiSession, ProviderConfig = options.AiProviderConfigPath ?? "Config/ai-provider.json",
             Identity = "Per-buyer OCR label sessions; test identities are isolated, no platform identity inference" });
-        Console.WriteLine($"[SHADOW V1.9] Session: {run}\nState: {stateRoot}\nAI={(options.AiShadow ? "ON" : "OFF")}; Send=OFF; first buyer snapshot is baseline. stop.request stops cleanly.");
+        Console.WriteLine($"[SHADOW V1.10] Session: {run}\nState: {stateRoot}\nAI={(options.AiShadow ? "ON" : "OFF")}; Send=OFF; first buyer snapshot is baseline. stop.request stops cleanly.");
         Console.WriteLine($"[Shadow Flags] AI_ENABLED={options.AiShadow.ToString().ToLowerInvariant()} SEND_ENABLED=false");
         try
         {
@@ -148,7 +155,7 @@ public sealed class QnocrShadowRunner
                         chatCalls++;
                         var chatOcr = await Recognize(Path.Combine(eventDirectory, "chat_region.png"));
                         var batch = structurer.Structure(chatOcr, productId, "SameCaptureVisibleProductNotVerifiedMessageAssociation");
-                        messageCount = batch.Messages.Count;
+                        messageCount = batch.Messages.Count; confirmedObservations += messageCount;
                         AtomicJson.Write(Path.Combine(eventDirectory, "chat-ocr.json"), chatOcr);
                         AtomicJson.Write(Path.Combine(eventDirectory, "buyer-messages.json"), batch);
                         var observedBuyer = SessionRegistry.ReadBuyer(batch, chatOcr);
@@ -156,6 +163,7 @@ public sealed class QnocrShadowRunner
                         {
                             var frameCaptureId = $"{Path.GetFileName(run)}:frame_{attempts:D6}";
                             buyerSession = registry.Resolve(observedBuyer, productId, captureTime, frameCaptureId); sessionIds.Add(buyerSession.SessionId);
+                            lifecycle.Observe(buyerSession, captureTime);
                             tracker = registry.Tracker(buyerSession, _displayNow()); comparison = tracker.Compare(batch.Messages, _displayNow());
                             AtomicJson.Write(Path.Combine(eventDirectory, "message-comparison.json"), comparison);
                             AtomicJson.Write(Path.Combine(eventDirectory, "buyer-session.json"), buyerSession);
@@ -232,12 +240,50 @@ public sealed class QnocrShadowRunner
                 }
                 if (watch.Elapsed >= nextHeartbeat)
                 {
+                    var now = DateTimeOffset.Now;
+                    lifecycle.SweepInactive(now, TimeSpan.FromMinutes(30));
+                    var sessionMetrics = lifecycle.Snapshot();
+                    var currentItems = dispatch.Snapshot().Where(i => runIds.Contains(i.MessageId)).ToArray();
                     using var process = Process.GetCurrentProcess();
-                    SafeAppend(run, "health.jsonl", new { At = DateTimeOffset.Now, ElapsedSeconds = watch.Elapsed.TotalSeconds, Attempts = attempts, SuccessfulFrames = frames,
-                        FailedFrames = failures, BuyerSessions = sessionIds.Count, NewMessages = runIds.Count,
-                        Pending = dispatch.Snapshot().Count(i => i.State is "Pending" or "Dispatching"), Uncertain = dispatch.Snapshot().Count(i => i.State == "Uncertain"),
-                        WorkingSetBytes = process.WorkingSet64, AiEnabled = options.AiShadow, SendEnabled = false });
-                    Console.WriteLine($"[Health] elapsed={watch.Elapsed.TotalMinutes:F1}m frames={frames} failures={failures} new={runIds.Count} sessions={sessionIds.Count}");
+                    peakWorkingSet = Math.Max(peakWorkingSet, process.WorkingSet64);
+                    long runBytes = -1, stateBytes = -1;
+                    try { runBytes = RunLogWriter.SizeBytes(run); stateBytes = RunLogWriter.SizeBytes(stateRoot); }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                    {
+                        recoveries++;
+                        SafeAppend(run, "recovery.jsonl", new { At = now, Stage = "StorageMeasurementFailed", Error = ex.GetType().Name });
+                    }
+                    var aiCalls = currentItems.Sum(i => i.AiCalls);
+                    var previews = currentItems.Count(i => i.AiEnabled && i.State == "Completed");
+                    var errors = failures + recoveries + dispatch.JournalErrors + agentTrace.Errors
+                        + currentItems.Count(i => i.State is "AiFailed" or "Uncertain");
+                    var persistedSessionsNow = Directory.Exists(Path.Combine(stateRoot, "sessions"))
+                        ? Directory.EnumerateDirectories(Path.Combine(stateRoot, "sessions")).Count() : 0;
+                    SafeAppend(run, "health.jsonl", new { At = now, StartedAt = startedAt, ElapsedSeconds = watch.Elapsed.TotalSeconds,
+                        Attempts = attempts, SuccessfulFrames = frames, FailedFrames = failures,
+                        ConfirmedObservations = confirmedObservations, CapturedMessages = runIds.Count,
+                        BuyerSessions = sessionMetrics.Observed, PersistedSessions = persistedSessionsNow,
+                        sessionMetrics.Active, sessionMetrics.Inactive, sessionMetrics.Closed, sessionMetrics.Reopened,
+                        ProductReferences = sessionMetrics.ProductReferences, AiCalls = aiCalls, ReplyPreviews = previews,
+                        ErrorCount = errors, Pending = currentItems.Count(i => i.State is "Pending" or "Dispatching"),
+                        Uncertain = currentItems.Count(i => i.State == "Uncertain"),
+                        WorkingSetBytes = process.WorkingSet64, PeakWorkingSetBytes = peakWorkingSet,
+                        RunBytes = runBytes, StateBytes = stateBytes, AiEnabled = options.AiShadow,
+                        SendEnabled = false, SentMessages = 0 });
+                    Console.WriteLine($"[Health] elapsed={watch.Elapsed.TotalMinutes:F1}m frames={frames} new={runIds.Count} sessions={sessionMetrics.Observed} refs={sessionMetrics.ProductReferences} AI={aiCalls} previews={previews} errors={errors}");
+                    if (sessionMetrics.Observed > 256)
+                    {
+                        status = "SessionGrowthLimitReached";
+                        SafeAppend(run, "recovery.jsonl", new { At = now, Stage = "SessionGrowthLimitReached", Observed = sessionMetrics.Observed, Action = "Stop without deleting session evidence" });
+                        break;
+                    }
+                    if (runBytes >= options.MaxRunMegabytes * 1024 * 1024 || stateBytes >= options.MaxStateMegabytes * 1024 * 1024)
+                    {
+                        status = "StorageLimitReached";
+                        SafeAppend(run, "recovery.jsonl", new { At = now, Stage = "StorageLimitReached", RunBytes = runBytes,
+                            StateBytes = stateBytes, options.MaxRunMegabytes, options.MaxStateMegabytes, Action = "Stop without deleting audit evidence" });
+                        break;
+                    }
                     nextHeartbeat = watch.Elapsed.Add(TimeSpan.FromMinutes(1));
                 }
                 if (options.MaximumFrames is null || attempts < options.MaximumFrames)
@@ -245,15 +291,35 @@ public sealed class QnocrShadowRunner
             }
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested) { status = "Cancelled"; }
-        finally { await dispatch.StopAsync(); }
+        finally
+        {
+            try { await dispatch.StopAsync(); }
+            finally { lifecycle.CloseAll(DateTimeOffset.Now); }
+        }
         var current = dispatch.Snapshot().Where(i => runIds.Contains(i.MessageId)).ToArray();
         var completed = current.Count(i => i.State == "Completed"); var deferred = current.Length - completed;
         if (status is "Completed" or "StoppedByRequest" && (failures > 0 || deferred > 0)) status = "CompletedWithIssues";
+        var endedAt = DateTimeOffset.Now;
+        var sessionStats = lifecycle.Snapshot();
+        using (var process = Process.GetCurrentProcess()) peakWorkingSet = Math.Max(peakWorkingSet, process.WorkingSet64);
+        var runSize = RunLogWriter.SizeBytes(run);
+        var stateSize = RunLogWriter.SizeBytes(stateRoot);
+        var archives = Path.Combine(run, "log-archive");
+        var archiveSegments = Directory.Exists(archives) ? Directory.EnumerateFiles(archives, "*.jsonl").Count() : 0;
+        var persistedSessions = Directory.Exists(Path.Combine(stateRoot, "sessions"))
+            ? Directory.EnumerateDirectories(Path.Combine(stateRoot, "sessions")).Count() : 0;
+        var errorCount = failures + recoveries + dispatch.JournalErrors + agentTrace.Errors
+            + current.Count(i => i.State is "AiFailed" or "Uncertain");
         var summary = new ShadowRunSummary(status, attempts, frames, failures, productCalls, chatCalls, runIds.Count, completed, deferred, run,
             runIds.Count, baselines, duplicates, historical, completed, options.AiShadow, current.Count(i => i.AiInvoked), options.AiShadow ? completed : 0,
             watch.Elapsed.TotalSeconds, sessionIds.Count, current.Count(i => i.State == "Uncertain"), recoveries, dispatch.JournalErrors, stateRoot,
             outOfScopeMessages, current.Count(i => i.State == "EmptyReply"), current.Count(i => i.State == "AiFailed"),
-            current.Sum(i => i.AiCalls));
+            current.Sum(i => i.AiCalls), StartedAt: startedAt, EndedAt: endedAt, PeakWorkingSetBytes: peakWorkingSet,
+            ProductReferences: sessionStats.ProductReferences, ActiveSessions: sessionStats.Active,
+            InactiveSessions: sessionStats.Inactive, ClosedSessions: sessionStats.Closed,
+            ReopenedSessions: sessionStats.Reopened, ConfirmedObservations: confirmedObservations,
+            ErrorCount: errorCount, RunBytes: runSize, StateBytes: stateSize,
+            LogArchiveSegments: archiveSegments, PersistedSessions: persistedSessions);
         AtomicJson.Write(Path.Combine(run, "summary.json"), summary);
         Console.WriteLine($"[Shadow] stopped: {JsonSerializer.Serialize(summary)}");
         return summary;
@@ -262,7 +328,7 @@ public sealed class QnocrShadowRunner
     }
     private static void SafeAppend<T>(string directory, string file, T value)
     {
-        try { File.AppendAllText(Path.Combine(directory, file), JsonSerializer.Serialize(value) + Environment.NewLine); }
+        try { RunLogWriter.Append(directory, file, value); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { Console.WriteLine($"[Recovery] diagnostic log unavailable: {file}: {ex.GetType().Name}"); }
     }
 }
