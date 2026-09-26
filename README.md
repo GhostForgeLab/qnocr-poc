@@ -1,7 +1,36 @@
-# qnocr-poc V1.11-A
+# qnocr-poc V1.12
 
 独立的千牛视觉采集实验：窗口捕获 → 布局裁剪 → OCR → BuyerMessage → 统一MessageEnvelope。
 主程序使用 C# / .NET 8 / Windows；V1.0增加独立.NET Framework 4.8离线兼容性宿主，不修改qnbot。
+## V1.12 人工辅助回复工作台
+
+AI Shadow生成的 `reply-preview.json` 会新增独立 `assistant-reply.json` 侧车状态；旧预览在首次查看时按原文初始化。
+CLI按 `AIGenerated → HumanEdited → Approved → Copied` 展示、编辑、审核并复制到Windows剪贴板。
+它不调用Send Adapter，也不操作千牛输入框。客服须自行切换千牛、核对目标会话、粘贴并发送；复制成功不能证明已发送；可记录一次人工自报结果，不当作平台回执。
+
+```powershell
+$stateDir = 'Output/State/your-state-dir'
+$previewId = '从--assist-list读取的ReplyPreviewId'
+$operatorId = '当前操作员标识'
+$replyFile = '本地UTF-8回复文件路径'
+$hash = '从最近一次show或edit读取的ReplySha256'
+
+dotnet run -- --assist-list --state-dir $stateDir
+dotnet run -- --assist-show $previewId --state-dir $stateDir
+dotnet run -- --assist-edit $previewId --state-dir $stateDir --operator $operatorId --text-file $replyFile
+# 人工审核当前文本后，更新$hash再批准、复制
+dotnet run -- --assist-approve $previewId --state-dir $stateDir --operator $operatorId --reply-sha256 $hash
+dotnet run -- --assist-copy $previewId --state-dir $stateDir --operator $operatorId --reply-sha256 $hash
+# 人工粘贴发送后可自报PastedAndSentReported；如本次没有发送则记录NotSentReported
+dotnet run -- --assist-outcome $previewId --state-dir $stateDir --operator $operatorId --result NotSentReported
+```
+
+每次动作写入状态目录的 `assistant-actions.jsonl`，关联CaptureId、SessionId、AI请求/响应ID与ReplyPreviewId；
+原AI回复与修改内容保存在侧车状态，日志不重复写正文。风险只依赖身份状态和是否存在商品引用：未Verified为High；
+已Verified但无商品引用为Medium；两者均存在为Low。Low不表示商品事实或发送目标已核对。
+`--operator` 是本地审计标签，不构成登录认证。既有 `--confirm-send` 仅支持隔离测试适配器，V1.12工作台不会调用它。
+验证见 [VALIDATION_V112.md](VALIDATION_V112.md)。
+
 ## V1.11-A 真实买家身份绑定前置层
 
 当前OCR聊天头只提供买家显示标签，不提供平台BuyerId或ConversationId。`SessionRegistry`把它与显式映射组成Session；
@@ -787,5 +816,5 @@ dotnet run 2>&1 | Tee-Object -FilePath Output/run.log
 截图和原始日志保留在本地 Output，不进入 Git。
 历史实测：V0.1 [VALIDATION.md](VALIDATION.md)，V0.2 [VALIDATION_V02.md](VALIDATION_V02.md)。
 
-范围止于 V1.2 新消息去重和隔离Shadow验证。UIA仍仅用于几何定位，不读取消息或商品ID文本。
-未修改qnbot核心业务；未连接运行中的qnbot，未启用AI回复或发送。
+V1.12已具备Shadow回复预览和人工复制辅助；真实平台Buyer身份仍未验证，工作台不会发送消息。
+UIA仍仅用于几何定位，不读取消息或商品ID文本；qnbot核心与MessageEnvelope未修改。

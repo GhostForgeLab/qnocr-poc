@@ -117,5 +117,6 @@ await AgentPipelineChecks.RunAsync(Check);
 await IdentityChecks.RunAsync(Check);
 await ConfirmationChecks.RunAsync(Check);
 await StabilityChecks.RunAsync(Check);
-Console.WriteLine($"Passed {passed} checks (V0.4 through V1.11-A). Fixtures: {root}");
+AssistantChecks.Run(Check);
+Console.WriteLine($"Passed {passed} checks (V0.4 through V1.12). Fixtures: {root}");
 return 0;

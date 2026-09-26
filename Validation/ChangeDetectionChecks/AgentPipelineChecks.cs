@@ -56,6 +56,10 @@ internal static class AgentPipelineChecks
                 && preview.SendStatus == "Shadow" && preview.CaptureId == latest.CaptureId && preview.AiRequestId == latest.AiRequestId
                 && preview.AiResponseId.Length > 0 && preview.ReplyPreviewId.Length > 0,
                 "preview carries capture, request, response and preview IDs with fixed Shadow send status");
+            var assistant = new AssistantReplyService(Path.Combine(root, "success-state")).Show(preview.ReplyPreviewId);
+            check(assistant?.Status == AssistedReplyStatuses.AiGenerated && assistant.AiReply == preview.Reply
+                && File.Exists(Path.Combine(root, "success-state", "outbox", latest.MessageId, "assistant-reply.json")),
+                "Agent preview automatically initializes durable assistant review without a send action");
         }
         var successEvents = File.ReadAllLines(Path.Combine(root, "agent-pipeline.jsonl")).Select(s => JsonDocument.Parse(s).RootElement.Clone()).ToArray();
         check(successEvents.Select(e => e.GetProperty("Event").GetString()).SequenceEqual(new[]
