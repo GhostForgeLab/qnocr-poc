@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using System.Security.Cryptography;
@@ -88,6 +89,7 @@ namespace CompatibilityHost
             if (args.Length == 5 && args[0] == "--ai-shadow") return await RunAiShadowAsync(args[1], args[2], args[3], args[4]);
             if (args.Length == 6 && args[0] == "--ai-shadow") return await RunAiShadowAsync(args[1], args[2], args[3], args[4], args[5]);
             if (args.Length == 4 && args[0] == "--agent-context-check") return await RunAgentContextCheckAsync(args[1], args[2], args[3]);
+            if (args.Length == 5 && args[0] == "--agent-context-check") return await RunAgentContextCheckAsync(args[1], args[2], args[3], args[4]);
             if (args.Length == 4 && args[0] == "--dispatch-shadow") return await RunDispatchShadowAsync(args[1], args[2], args[3]);
             if (args.Length == 4 && args[0] == "--shadow-convert") return RunShadowConversion(args[1], args[2], args[3]);
             if (args.Length != 3) { Console.Error.WriteLine("Usage: QnbotCompatibility.exe envelope.json identity_mapping.json output-directory"); return 2; }
@@ -266,7 +268,10 @@ namespace CompatibilityHost
                     Input = envelope.Messages, ProductId = envelope.ProductId, ProductBinding = envelope.ProductBinding,
                     SalesAgent = ai.SalesObservation, KnowledgeV2 = ai.KnowledgeObservation, GenerationTrace = ai.GenerationTrace(),
                     AiDurationMilliseconds = ai.GenerationMilliseconds,
-                    ProductContextUsage = "Logged OCR sidecar; existing generation service has no product-ID prompt parameter. No fabricated product URL or prompt rewrite.",
+                    ProductContextUsage = context != null && context.Knowledge != null
+                        ? (context.Knowledge.Status == "Available" ? "Bounded local test facts in model question; qnbot Prompt template unchanged."
+                            : "Missing-field status in model question; no product facts supplied.")
+                        : "Logged OCR sidecar; existing generation service has no product-ID prompt parameter.",
                     CoordinatorCreated = true, CoordinatorCallbacks = callbacks, ForbiddenBusinessCalls = Guard.ForbiddenCalls,
                     SendEntryInvoked = false, SentMessages = 0, RuntimeInitializers = Guard.SuppressedInitializers,
                     IsTestIdentity = true, SourceFilesVerified = manifest.Sources.Length, QnbotBaselineCommit = manifest.QnbotCommit,
@@ -292,6 +297,7 @@ namespace CompatibilityHost
                 || context.Messages.Last().Text != envelope.Messages[0].Text
                 || context.Messages.Last().Timestamp != envelope.Messages[0].Timestamp)
                 throw new InvalidDataException("AI context does not match the current one-message MessageEnvelope.");
+            ValidateKnowledgeContext(context, envelope);
             // The qnbot coordinator owns live-message lifecycle. Replaying history as new burst items
             // supersedes generations and can drop the first item; only the current item enters it.
             return envelope;
@@ -299,20 +305,64 @@ namespace CompatibilityHost
 
         private static string BuildModelQuestion(string currentQuestion, AgentContextWire context)
         {
-            if (context == null || context.ModelInputMessageCount == 1) return currentQuestion;
-            var history = context.Messages.Skip(context.Messages.Count - context.ModelInputMessageCount)
-                .Take(context.ModelInputMessageCount - 1);
-            var question = new StringBuilder("【同一买家会话的已确认历史消息（按时间顺序）】\n");
-            foreach (var message in history)
-                question.Append(message.Timestamp).Append(' ').Append(message.Role).Append(": ").Append(message.Text).Append('\n');
-            return question.Append("【当前买家消息】\n").Append(currentQuestion).ToString();
+            string baseQuestion;
+            if (context == null || context.ModelInputMessageCount == 1) baseQuestion = currentQuestion;
+            else
+            {
+                var history = context.Messages.Skip(context.Messages.Count - context.ModelInputMessageCount)
+                    .Take(context.ModelInputMessageCount - 1);
+                var question = new StringBuilder("【同一买家会话的已确认历史消息（按时间顺序）】\n");
+                foreach (var message in history)
+                    question.Append(message.Timestamp).Append(' ').Append(message.Role).Append(": ").Append(message.Text).Append('\n');
+                baseQuestion = question.Append("【当前买家消息】\n").Append(currentQuestion).ToString();
+            }
+            if (context == null || context.Knowledge == null) return baseQuestion;
+            var knowledge = context.Knowledge;
+            var result = new StringBuilder(baseQuestion).Append("\n【本地测试商品上下文】\n");
+            if (knowledge.Status == "Available")
+            {
+                result.Append("ProductId: ").Append(knowledge.ProductId).Append("; Source: ").Append(knowledge.Source).Append('\n');
+                foreach (var fact in knowledge.FactFields.OrderBy(pair => pair.Key, StringComparer.Ordinal))
+                    result.Append(fact.Key).Append(": ").Append(fact.Value).Append('\n');
+            }
+            else result.Append("缺失字段: ").Append(string.Join(", ", knowledge.MissingFields)).Append('\n');
+            return result.ToString();
         }
 
-        private static async Task<int> RunAgentContextCheckAsync(string envelopePath, string identityPath, string output)
+        private static void ValidateKnowledgeContext(AgentContextWire context, MessageEnvelope envelope)
+        {
+            var knowledge = context.Knowledge;
+            if (knowledge == null) return;
+            var allowed = new HashSet<string>(StringComparer.Ordinal)
+            { "Capacity", "Material", "CustomizationPolicy", "Waterproof", "ShippingTime",
+                "ReturnPolicy", "CurrentPrice", "Specification", "Unspecified" };
+            if (knowledge.ProductId != envelope.ProductId || knowledge.FactFields == null || knowledge.MissingFields == null ||
+                knowledge.FactFields.Keys.Any(key => !allowed.Contains(key)) ||
+                knowledge.MissingFields.Any(field => !allowed.Contains(field)))
+                throw new InvalidDataException("Knowledge context does not match current product or allowed fields.");
+            if (knowledge.Status == "Available")
+            {
+                if (knowledge.ProductId != "1051087533910" || knowledge.Source != "LocalTestProductConfig" ||
+                    !knowledge.IsTestData || knowledge.FactFields.Count < 1 || knowledge.FactFields.Count > 3 ||
+                    knowledge.MissingFields.Count != 0 || knowledge.FactFields.Values.Any(value =>
+                        string.IsNullOrWhiteSpace(value) || value.Length > 200 ||
+                        value.Any(ch => char.IsControl(ch) || ch == '<' || ch == '>' || ch == '{' || ch == '}')))
+                    throw new InvalidDataException("Only bounded single-product test facts may enter model question.");
+            }
+            else if (knowledge.Status == "Missing")
+            {
+                if (knowledge.Source != "None" || knowledge.FactFields.Count != 0 || knowledge.MissingFields.Count == 0)
+                    throw new InvalidDataException("Missing knowledge cannot carry product facts.");
+            }
+            else throw new InvalidDataException("Unsupported knowledge status.");
+        }
+        private static async Task<int> RunAgentContextCheckAsync(string envelopePath, string identityPath, string output,
+            string modelContextPath = null)
         {
             var manifest = VerifySourceSnapshot();
             var envelope = Json.Deserialize<MessageEnvelope>(File.ReadAllText(envelopePath));
-            var context = Json.Deserialize<AgentContextWire>(File.ReadAllText(Path.Combine(Path.GetDirectoryName(envelopePath), "context.json")));
+            var context = Json.Deserialize<AgentContextWire>(File.ReadAllText(modelContextPath ??
+                Path.Combine(Path.GetDirectoryName(envelopePath), "context.json")));
             var aiEnvelope = BuildContextEnvelope(envelope, context);
             var identity = Json.Deserialize<QnbotIdentityMapping>(File.ReadAllText(identityPath));
             if (!identity.IsTestMapping) throw new InvalidDataException("Context check accepts test identities only.");
@@ -323,8 +373,11 @@ namespace CompatibilityHost
             var coordinator = new BuyerMessageBurstCoordinator(lease =>
             {
                 System.Threading.Interlocked.Increment(ref callbacks);
+                var modelQuestion = BuildModelQuestion(lease.Burst.CombinedQuestion, context);
+                var factsPresent = context.Knowledge != null && context.Knowledge.Status == "Available" &&
+                    context.Knowledge.FactFields.All(fact => modelQuestion.Contains(fact.Key + ": " + fact.Value));
                 completed.TrySetResult(new[] { lease.Burst.Items.Count,
-                    BuildModelQuestion(lease.Burst.CombinedQuestion, context).Length });
+                    modelQuestion.Length, factsPresent ? 1 : 0 });
                 return Task.CompletedTask;
             });
             foreach (var item in items) coordinator.Enqueue(item.BurstItem);
@@ -338,6 +391,10 @@ namespace CompatibilityHost
             var receipt = new { Mode = "LocalContextCheck", ContextMessageCount = context.Messages.Count,
                 ModelInputMessageCount = context.ModelInputMessageCount, CoordinatorItems = payload[0], PromptLength = payload[1],
                 AiInvoked = false, AiCalls = 0, SendEnabled = false, SentMessages = 0,
+                KnowledgeStatus = context.Knowledge == null ? null : context.Knowledge.Status,
+                KnowledgeFactsPresent = payload[2] == 1,
+                KnowledgeFieldNames = context.Knowledge == null ? new string[0] :
+                    context.Knowledge.FactFields.Keys.OrderBy(name => name, StringComparer.Ordinal).ToArray(),
                 CoordinatorCallbacks = callbacks, ForbiddenBusinessCalls = Guard.ForbiddenCalls,
                 SourceFilesVerified = manifest.Sources.Length };
             File.WriteAllText(Path.Combine(output, "context-check.json"), Json.Serialize(receipt));

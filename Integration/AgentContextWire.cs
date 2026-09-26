@@ -20,8 +20,19 @@ namespace QnocrPoc.Integration.Wire
         public string AiRequestId { get; set; }
         public int ModelInputMessageCount { get; set; }
         public List<EnvelopeMessage> Messages { get; set; }
+        public KnowledgeContextWire Knowledge { get; set; }
     }
 
+    public sealed class KnowledgeContextWire
+    {
+        public string Status { get; set; }
+        public string ProductId { get; set; }
+        public string Source { get; set; }
+        public Dictionary<string, string> FactFields { get; set; }
+        public List<string> MissingFields { get; set; }
+        public bool IsTestData { get; set; }
+        public string UpdatedAt { get; set; }
+    }
     public sealed class BuyerIdentityWire
     {
         public string BuyerId { get; set; }

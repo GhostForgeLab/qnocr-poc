@@ -2,6 +2,9 @@ using System.Drawing;
 using System.Drawing.Imaging;
 using QnocrPoc.Detection;
 
+if (args.Length == 2 && args[0] == "--product-provider-live-smoke")
+    return await ProductProviderLiveSmoke.RunAsync(args[1]);
+
 if (args.Length == 2 && args[0] == "--provider-live-smoke")
     return await ProviderLiveSmoke.RunAsync(args[1]);
 
@@ -124,11 +127,12 @@ BindingChecks.Run(Check);
 await AgentPipelineChecks.RunAsync(Check);
 await DecisionChecks.RunAsync(Check);
 await KnowledgeChecks.RunAsync(Check);
+await ProductKnowledgeChecks.RunAsync(Check);
 await IdentityChecks.RunAsync(Check);
 await ConfirmationChecks.RunAsync(Check);
 await StabilityChecks.RunAsync(Check);
 AssistantChecks.Run(Check);
 AssistantOperationsChecks.Run(Check);
 EvaluationBatchChecks.Run(Check);
-Console.WriteLine($"Passed {passed} checks (V0.4 through V1.16). Fixtures: {root}");
+Console.WriteLine($"Passed {passed} checks (V0.4 through V1.17). Fixtures: {root}");
 return 0;

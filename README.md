@@ -1,7 +1,24 @@
-# qnocr-poc V1.16
+# qnocr-poc V1.17
 
 独立的千牛视觉采集实验：窗口捕获 → 布局裁剪 → OCR → BuyerMessage → 统一MessageEnvelope。
 主程序使用 C# / .NET 8 / Windows；V1.0增加独立.NET Framework 4.8离线兼容性宿主，不修改qnbot。
+
+## V1.17 单商品 ProductKnowledgeProvider PoC
+
+本阶段只有 [Knowledge/product-knowledge.json](Knowledge/product-knowledge.json) 中一条**本地合成测试商品**（`1051087533910`）：容量`100ml, 200ml`、材质`TA1纯钛`、定制字段`支持刻字`。这些值未经真实平台验证，不能作为真实客服商品事实发布。
+`ProductKnowledgeProvider`只按当前可见ProductId精确匹配这条记录，返回请求字段；未知商品、缺失字段或当前商品ID为空均返回Missing，不借用历史引用。`防水等级`由KnowledgeRequestBuilder产生`Waterproof`需求，但不修改V1.15 Decision规则；本地测试记录没有该字段。
+
+只有在隔离AI Shadow显式提供 `--product-knowledge Knowledge/product-knowledge.json` 时才启用测试Provider；默认仍为V1.16空Provider。
+成功字段先写入单次调用目录的`model-context.json`，隔离qnbot宿主校验商品ID、来源和字段边界后，把事实附加到传给原生成服务的**模型问题文本**。qnbot核心Prompt模板、AI Provider接口、原`context.json`和MessageEnvelope保持不变。结果预览标记`KnowledgeStatus=Available`、`KnowledgeSource=LocalTestProductConfig`、`KnowledgeUsedByAi=true`；这是测试来源，不是平台验证。
+缺失字段只进入模型上下文的Missing状态，不附加事实；即使下游AI给出无依据的断言，PoC会在**人工预览层**替换成“当前缺少已确认的商品信息，请人工核实后答复。”并标记`KnowledgeGuardApplied=true`。原AI调用仍发生，程序始终不发送。
+
+```powershell
+# 只允许测试映射与明确的单一AI测试Session；真实客服会话不要启用合成商品事实
+$testSessionId = '替换为64位隔离测试SessionId'
+dotnet run -- --shadow --ai-shadow --identity Validation/QnbotCompatibility/identity_mapping.json --ai-session $testSessionId --provider-config Config/ai-provider.json --product-knowledge Knowledge/product-knowledge.json --minutes 3
+```
+
+规则仅适用于一个测试商品，不提供FAQ、RAG、向量库、批量导入或完整商品系统。离线和可选合成AI验收见 [VALIDATION_V117.md](VALIDATION_V117.md)。
 
 ## V1.16 Knowledge Interface只读知识接口层
 
@@ -893,5 +910,5 @@ dotnet run 2>&1 | Tee-Object -FilePath Output/run.log
 截图和原始日志保留在本地 Output，不进入 Git。
 历史实测：V0.1 [VALIDATION.md](VALIDATION.md)，V0.2 [VALIDATION_V02.md](VALIDATION_V02.md)。
 
-V1.16已具备只读Knowledge接口旁路与可审计的缺失状态；真实平台Buyer身份仍未验证，工作台不会发送消息。
+V1.17已具备显式启用的单商品本地测试Provider；真实平台Buyer身份仍未验证，工作台不会发送消息。
 UIA仍仅用于几何定位，不读取消息或商品ID文本；qnbot核心与MessageEnvelope未修改。

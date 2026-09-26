@@ -24,6 +24,8 @@ public sealed class ShadowAdapterClient(bool aiShadow = false, bool dispatch = f
         if (aiShadow)
         {
             var contextPath = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(envelopePath))!, "context.json");
+            var modelContext = Path.Combine(Path.GetFullPath(outputDirectory), "model-context.json");
+            if (File.Exists(modelContext)) contextPath = modelContext;
             if (File.Exists(contextPath))
             {
                 start.ArgumentList.Add(contextPath);

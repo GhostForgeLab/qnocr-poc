@@ -13,7 +13,8 @@ namespace QnocrPoc.Shadow;
 
 public sealed record ShadowRunOptions(int? MaximumFrames = null, int IntervalMilliseconds = 1000, string? IdentityMappingPath = null,
     bool AiShadow = false, double? MaximumMinutes = null, string? StateDirectory = null, string? AiSessionId = null,
-    string? AiProviderConfigPath = null, double MaxRunMegabytes = 1024, double MaxStateMegabytes = 4096);
+    string? AiProviderConfigPath = null, double MaxRunMegabytes = 1024, double MaxStateMegabytes = 4096,
+    string? ProductKnowledgePath = null);
 public sealed record ShadowRunSummary(string Status, int Attempts, int SuccessfulFrames, int FailedFrames,
     int ProductOcrCalls, int ChatOcrCalls, int Envelopes, int ConvertedEnvelopes, int DeferredEnvelopes, string SessionDirectory,
     int NewMessages, int BaselineMessages, int DuplicateObservations, int HistoricalObservations, int ConvertedMessages,
@@ -23,7 +24,7 @@ public sealed record ShadowRunSummary(string Status, int Attempts, int Successfu
     bool SendEnabled = false, int SentMessages = 0, DateTimeOffset StartedAt = default, DateTimeOffset EndedAt = default,
     long PeakWorkingSetBytes = 0, int ProductReferences = 0, int ActiveSessions = 0, int InactiveSessions = 0,
     int ClosedSessions = 0, int ReopenedSessions = 0, int ConfirmedObservations = 0, int ErrorCount = 0,
-    long RunBytes = 0, long StateBytes = 0, int LogArchiveSegments = 0, int PersistedSessions = 0, int KnowledgeErrors = 0);
+    long RunBytes = 0, long StateBytes = 0, int LogArchiveSegments = 0, int PersistedSessions = 0, int KnowledgeErrors = 0, bool ProductKnowledgeEnabled = false);
 
 public sealed class QnocrShadowRunner
 {
@@ -51,6 +52,10 @@ public sealed class QnocrShadowRunner
             || !double.IsFinite(options.MaxStateMegabytes) || options.MaxStateMegabytes <= 0) throw new ArgumentOutOfRangeException(nameof(options));
         token.ThrowIfCancellationRequested();
         if (options.AiShadow && options.IdentityMappingPath is null) throw new InvalidDataException("AI Shadow requires an explicit test mapping.");
+        if (options.ProductKnowledgePath is not null && !options.AiShadow)
+            throw new InvalidDataException("Local test product knowledge requires explicit AI Shadow mode.");
+        if (options.ProductKnowledgePath is not null && _knowledgeProvider is not null)
+            throw new InvalidDataException("Choose either an injected provider or a local test file, never both.");
         if (options.AiShadow && (options.AiSessionId is null || options.AiSessionId.Length != 64 || !options.AiSessionId.All(Uri.IsHexDigit)))
             throw new InvalidDataException("AI Shadow requires the 64-character SessionId of the explicit test buyer.");
         var allowedAiSession = options.AiSessionId?.ToUpperInvariant();
@@ -67,6 +72,8 @@ public sealed class QnocrShadowRunner
             if (options.AiShadow && !doc.RootElement.GetProperty("IsTestMapping").GetBoolean()) throw new InvalidDataException("AI Shadow requires isolated test identity.");
             mapping = Path.Combine(run, "identity.snapshot.json"); File.WriteAllText(mapping, json);
         }
+        var selectedKnowledge = options.ProductKnowledgePath is null ? _knowledgeProvider :
+            new ProductKnowledgeProvider(options.ProductKnowledgePath);
         var registry = new SessionRegistry(stateRoot, run, mapping);
         var lifecycle = new SessionRunLifecycle(stateRoot, run);
         var agentTrace = new AgentPipelineTrace(run);
@@ -78,7 +85,7 @@ public sealed class QnocrShadowRunner
             _adapt ?? (options.AiShadow
                 ? new AgentShadowClient(options.AiProviderConfigPath).ConvertAsync
                 : new ShadowAdapterClient(dispatch: true).ConvertAsync), options.AiShadow, agentTrace,
-            knowledgeProvider: _knowledgeProvider);
+            knowledgeProvider: selectedKnowledge, enrichAiContext: options.ProductKnowledgePath is not null);
         dispatch.Start();
         var startedAt = DateTimeOffset.Now;
         var watch = Stopwatch.StartNew(); var nextHeartbeat = TimeSpan.Zero; var peakWorkingSet = 0L; var confirmedObservations = 0;
@@ -88,11 +95,12 @@ public sealed class QnocrShadowRunner
         var runIds = new HashSet<string>(StringComparer.Ordinal); var sessionIds = new HashSet<string>(StringComparer.Ordinal);
         var outOfScopeMessages = 0;
         var status = "Completed";
-        AtomicJson.Write(Path.Combine(run, "session.json"), new { Version = "1.16", StartedAt = startedAt, StateDirectory = stateRoot,
+        AtomicJson.Write(Path.Combine(run, "session.json"), new { Version = "1.17", StartedAt = startedAt, StateDirectory = stateRoot,
             options.MaximumFrames, options.MaximumMinutes, options.MaxRunMegabytes, options.MaxStateMegabytes, AiEnabled = options.AiShadow, SendEnabled = false,
             AllowedAiSession = allowedAiSession, ProviderConfig = options.AiProviderConfigPath ?? "Config/ai-provider.json",
-            Identity = "Per-buyer OCR label sessions; test identities are isolated, no platform identity inference" });
-        Console.WriteLine($"[SHADOW V1.16] Session: {run}\nState: {stateRoot}\nAI={(options.AiShadow ? "ON" : "OFF")}; Send=OFF; first buyer snapshot is baseline. stop.request stops cleanly.");
+            Identity = "Per-buyer OCR label sessions; test identities are isolated, no platform identity inference",
+            ProductKnowledgeEnabled = options.ProductKnowledgePath is not null });
+        Console.WriteLine($"[SHADOW V1.17] Session: {run}\nState: {stateRoot}\nAI={(options.AiShadow ? "ON" : "OFF")}; Send=OFF; first buyer snapshot is baseline. stop.request stops cleanly.");
         Console.WriteLine($"[Shadow Flags] AI_ENABLED={options.AiShadow.ToString().ToLowerInvariant()} SEND_ENABLED=false");
         try
         {
@@ -326,7 +334,7 @@ public sealed class QnocrShadowRunner
             ReopenedSessions: sessionStats.Reopened, ConfirmedObservations: confirmedObservations,
             ErrorCount: errorCount, RunBytes: runSize, StateBytes: stateSize,
             LogArchiveSegments: archiveSegments, PersistedSessions: persistedSessions,
-            KnowledgeErrors: dispatch.KnowledgeErrors);
+            KnowledgeErrors: dispatch.KnowledgeErrors, ProductKnowledgeEnabled: options.ProductKnowledgePath is not null);
         AtomicJson.Write(Path.Combine(run, "summary.json"), summary);
         Console.WriteLine($"[Shadow] stopped: {JsonSerializer.Serialize(summary)}");
         return summary;

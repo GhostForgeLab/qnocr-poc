@@ -24,6 +24,7 @@ public sealed class DurableShadowDispatch : IDisposable
     private readonly AgentPipelineTrace? _agentTrace;
     private readonly IIntentClassifier _intentClassifier;
     private readonly IKnowledgeProvider _knowledgeProvider;
+    private readonly bool _enrichAiContext;
     private Task? _worker;
     private volatile bool _stopping;
     public int JournalErrors { get; private set; }
@@ -33,11 +34,12 @@ public sealed class DurableShadowDispatch : IDisposable
     public DurableShadowDispatch(string root, string journal, CancellationToken token,
         Func<string, string?, string, CancellationToken, Task<ShadowAdapterResult>> send, bool? aiMode = null,
         AgentPipelineTrace? agentTrace = null, IIntentClassifier? intentClassifier = null,
-        IKnowledgeProvider? knowledgeProvider = null)
+        IKnowledgeProvider? knowledgeProvider = null, bool enrichAiContext = false)
     {
         _root = Path.GetFullPath(root); _journal = journal; _token = token; _send = send; _aiMode = aiMode;
         _agentTrace = agentTrace; _intentClassifier = intentClassifier ?? new RuleBasedIntentClassifier();
         _knowledgeProvider = knowledgeProvider ?? new EmptyKnowledgeProvider();
+        _enrichAiContext = enrichAiContext;
         Directory.CreateDirectory(_root);
         _lock = new FileStream(Path.Combine(_root, "agent.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
         foreach (var file in Directory.EnumerateFiles(_root, "item.json", SearchOption.AllDirectories))
@@ -123,6 +125,10 @@ public sealed class DurableShadowDispatch : IDisposable
                 SessionContextView? context = null;
                 IntentResult? decision = null;
                 var knowledgeStatus = KnowledgeStatuses.NotRequired;
+                KnowledgeRequest? knowledgeRequest = null;
+                KnowledgeResult? knowledgeResult = null;
+                var knowledgeUsedByAi = false;
+                var knowledgeGuardApplied = false;
                 DateTimeOffset requestedAt = default;
                 try
                 {
@@ -153,9 +159,10 @@ public sealed class DurableShadowDispatch : IDisposable
                     }
                     if (context is not null && decision is not null)
                     {
-                        if (decision.NeedKnowledge)
+                        var request = KnowledgeRequestBuilder.Build(context, decision);
+                        if (decision.NeedKnowledge || request.NeedFields.Count > 0)
                         {
-                            var request = KnowledgeRequestBuilder.Build(context, decision);
+                            knowledgeRequest = request;
                             _agentTrace?.KnowledgeRequested(item, context, request);
                             KnowledgeResult knowledge;
                             try
@@ -178,16 +185,34 @@ public sealed class DurableShadowDispatch : IDisposable
                             try
                             {
                                 AtomicJson.Write(Path.Combine(Folder(item), "knowledge-result.json"), new
-                                { knowledge.Success, knowledge.Source, knowledge.Confidence, knowledge.MissingFields, Status = knowledgeStatus });
+                                { knowledge.Success, knowledge.Source, knowledge.Confidence, knowledge.MissingFields,
+                                    ReturnedFields = knowledge.ReturnedFields?.Keys.ToArray(), Status = knowledgeStatus });
                             }
                             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                             {
                                 KnowledgeErrors++;
                                 _agentTrace?.KnowledgeError(item, context, request, ex.GetType().Name + "; metadata persistence failed");
                             }
+                            knowledgeResult = knowledge;
                             _agentTrace?.KnowledgeResolved(item, context, request, knowledge);
                         }
                         else _agentTrace?.KnowledgeSkipped(item, context, decision);
+                    }
+                    if (_enrichAiContext && context is not null && knowledgeRequest is not null && knowledgeResult is not null)
+                    {
+                        try
+                        {
+                            KnowledgeModelContextWriter.Write(Path.Combine(Folder(item), $"attempt_{item.Attempts:D4}", "model-context.json"),
+                                context, knowledgeRequest, knowledgeResult, knowledgeStatus);
+                            knowledgeUsedByAi = knowledgeStatus == KnowledgeStatuses.Available;
+                            _agentTrace?.KnowledgeContextAttached(item, context, knowledgeRequest, knowledgeResult, knowledgeStatus);
+                        }
+                        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
+                        {
+                            KnowledgeErrors++;
+                            knowledgeStatus = KnowledgeStatuses.Missing;
+                            _agentTrace?.KnowledgeError(item, context, knowledgeRequest, ex.GetType().Name + "; model context not attached");
+                        }
                     }
                     requestedAt = DateTimeOffset.Now;
                     result = await _send(Path.Combine(Folder(item), "envelope.json"), item.Session.IdentityPath,
@@ -213,10 +238,18 @@ public sealed class DurableShadowDispatch : IDisposable
                         result = result with { Status = "EmptyReply", Reason = "AI result was empty; no preview created." };
                     var aiResponseId = result.Status == "Converted" ? Guid.NewGuid().ToString("N") : null;
                     _agentTrace.Response(item, context, result, aiResponseId);
+                    if (_enrichAiContext && knowledgeStatus == KnowledgeStatuses.Missing &&
+                        knowledgeRequest?.NeedFields.Count > 0 && result.Status == "Converted")
+                    {
+                        result = result with { ReplySuggestion = "当前缺少已确认的商品信息，请人工核实后答复。" };
+                        knowledgeGuardApplied = true;
+                        _agentTrace.KnowledgeGuardApplied(item, context, knowledgeRequest);
+                    }
                     if (result.Status == "Converted")
                     {
                         var preview = new ReplyPreview(item.Session.SessionId, item.Session.BuyerId, context, result.ReplySuggestion!,
-                            null, DateTimeOffset.Now, "Shadow", item.CaptureId ?? "", context.AiRequestId, aiResponseId!, Guid.NewGuid().ToString("N"), decision, knowledgeStatus);
+                            null, DateTimeOffset.Now, "Shadow", item.CaptureId ?? "", context.AiRequestId, aiResponseId!, Guid.NewGuid().ToString("N"), decision, knowledgeStatus,
+                            knowledgeResult?.Source, knowledgeUsedByAi, knowledgeGuardApplied);
                         try
                         {
                             AtomicJson.Write(Path.Combine(Folder(item), "reply-preview.json"), preview);

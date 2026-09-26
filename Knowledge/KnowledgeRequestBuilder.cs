@@ -14,7 +14,9 @@ public static class KnowledgeRequestBuilder
             context.ProductReferences?.FirstOrDefault(r => r.ProductId == context.ProductId && r.CaptureId == context.CaptureId)
             ?? new ProductReference(context.ProductId, "Qianniu.OCR.CurrentContext", context.CapturedAt,
                 context.CaptureId, "ObservedNotVerified");
-        var fields = decision.IntentName switch
+        var waterproof = question.Contains("防水", StringComparison.Ordinal) ||
+            question.Contains("waterproof", StringComparison.OrdinalIgnoreCase);
+        var fields = waterproof ? new[] { "Waterproof" } : decision.IntentName switch
         {
             "PRODUCT_SPEC_QUERY" => question.Contains("ml", StringComparison.OrdinalIgnoreCase)
                 || question.Contains("毫升", StringComparison.Ordinal) || question.Contains("容量", StringComparison.Ordinal)

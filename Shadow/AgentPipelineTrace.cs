@@ -77,7 +77,8 @@ public sealed class AgentPipelineTrace(string runDirectory)
             context.Messages.Count, null, null, "Knowledge content is not added to AI input",
             Intent: request.Intent, Source: result.Source, Success: result.Success,
             ProductReference: request.ProductReference?.ProductId,
-            NeedFields: request.NeedFields, MissingFields: result.MissingFields));
+            NeedFields: request.NeedFields, MissingFields: result.MissingFields,
+            ReturnedFields: result.ReturnedFields?.Keys.ToArray()));
     public bool KnowledgeError(DispatchItem item, SessionContextView context,
         KnowledgeRequest request, string errorType) =>
         Write(new(DateTimeOffset.Now, "KNOWLEDGE_ERROR", item.CaptureId ?? "", item.Session.SessionId,
@@ -85,6 +86,22 @@ public sealed class AgentPipelineTrace(string runDirectory)
             context.Messages.Count, null, null, errorType + "; AI continues without knowledge",
             Intent: request.Intent, ProductReference: request.ProductReference?.ProductId,
             NeedFields: request.NeedFields));
+    public bool KnowledgeContextAttached(DispatchItem item, SessionContextView context,
+        KnowledgeRequest request, KnowledgeResult result, string status) =>
+        Write(new(DateTimeOffset.Now, "KNOWLEDGE_CONTEXT_ATTACHED", item.CaptureId ?? "", item.Session.SessionId,
+            item.Session.BuyerId, item.MessageId, context.AiRequestId, null, item.Envelope.ProductId,
+            context.Messages.Count, null, null, "Model question receives bounded test facts/status; no Prompt template change",
+            Intent: request.Intent, Source: result.Source, Success: result.Success,
+            ProductReference: request.ProductReference?.ProductId,
+            NeedFields: request.NeedFields, MissingFields: result.MissingFields,
+            ReturnedFields: result.ReturnedFields?.Keys.ToArray()));
+    public bool KnowledgeGuardApplied(DispatchItem item, SessionContextView context,
+        KnowledgeRequest request) =>
+        Write(new(DateTimeOffset.Now, "KNOWLEDGE_GUARD_APPLIED", item.CaptureId ?? "", item.Session.SessionId,
+            item.Session.BuyerId, item.MessageId, context.AiRequestId, null, item.Envelope.ProductId,
+            context.Messages.Count, null, null, "Unsupported fact replaced with human-review fallback",
+            Intent: request.Intent, ProductReference: request.ProductReference?.ProductId,
+            MissingFields: request.NeedFields));
     public bool KnowledgeSkipped(DispatchItem item, SessionContextView context, IntentResult decision) =>
         Write(new(DateTimeOffset.Now, "KNOWLEDGE_SKIPPED", item.CaptureId ?? "", item.Session.SessionId,
             item.Session.BuyerId, item.MessageId, context.AiRequestId, null, item.Envelope.ProductId,
@@ -102,6 +119,7 @@ public sealed class AgentPipelineTrace(string runDirectory)
     public bool Preview(DispatchItem item, ReplyPreview preview) =>
         Write(new(preview.CreatedAt, "REPLY_PREVIEW_CREATED", item.CaptureId ?? "", item.Session.SessionId,
             item.Session.BuyerId, item.MessageId, preview.AiRequestId, preview.ReplyPreviewId,
-            item.Envelope.ProductId, preview.Input.Messages.Count, null, null, "SendStatus=Shadow; KnowledgeStatus=" + (preview.KnowledgeStatus ?? "UnknownLegacy"), preview.AiResponseId,
+            item.Envelope.ProductId, preview.Input.Messages.Count, null, null, "SendStatus=Shadow; KnowledgeStatus=" + (preview.KnowledgeStatus ?? "UnknownLegacy") +
+                "; KnowledgeUsedByAi=" + preview.KnowledgeUsedByAi + "; GuardApplied=" + preview.KnowledgeGuardApplied, preview.AiResponseId,
             preview.Decision?.IntentName, preview.Decision?.Confidence, preview.Decision?.RiskLevel));
 }
