@@ -2,6 +2,7 @@
 
 独立的千牛视觉采集实验：窗口捕获 → 布局裁剪 → OCR → BuyerMessage → 统一MessageEnvelope。
 主程序使用 C# / .NET 8 / Windows；V1.0增加独立.NET Framework 4.8离线兼容性宿主，不修改qnbot。
+
 ## V1.16 Knowledge Interface只读知识接口层
 
 AI Shadow现在按 `Decision → KnowledgeRequestBuilder → IKnowledgeProvider → 原AI适配器` 运行。默认`EmptyKnowledgeProvider`无网络或文件查询，一律返回`Success=false`、`Source=None`、`Confidence=null`、空Content和所需`MissingFields`；**不含商品事实**。
@@ -12,6 +13,7 @@ AI Shadow现在按 `Decision → KnowledgeRequestBuilder → IKnowledgeProvider 
 Outbox仅保存`knowledge-result.json`元数据，不保存Content。新Reply Preview和人工辅助视图显示`KnowledgeStatus=Missing`；无需知识时为`NotRequired`且不调用Provider；`Available`仅为未来接口预留。
 Provider异常计入KnowledgeErrors，写入`KNOWLEDGE_ERROR`后降级为Missing，原AI仍按未修改的输入生成回复。决策与知识状态都不改变Prompt、MessageEnvelope或发送行为。
 本阶段没有商品资料录入、FAQ、RAG、向量数据库或真实知识源接入。详见 [VALIDATION_V116.md](VALIDATION_V116.md)。
+
 ## V1.15 Agent Decision Layer基础架构
 
 AI Shadow现在按 `SessionContextView → IIntentClassifier → decision.json / DECISION_CREATED → 原AI适配器 → ReplyPreview` 运行。

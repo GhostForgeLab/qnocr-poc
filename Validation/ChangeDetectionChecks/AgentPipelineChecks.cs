@@ -58,8 +58,10 @@ internal static class AgentPipelineChecks
                     !knowledgeDoc.RootElement.TryGetProperty("Content", out _),
                     "EmptyKnowledgeProvider reports missing fields before unchanged AI adapter call without persisting content");
                 check(!File.ReadAllText(Path.Combine(folder, "context.json")).Contains("\"Decision\"") &&
-                    !File.ReadAllText(envelopePath).Contains("\"Decision\""),
-                    "decision metadata does not modify model context or MessageEnvelope input");
+                    !File.ReadAllText(envelopePath).Contains("\"Decision\"") &&
+                    !File.ReadAllText(Path.Combine(folder, "context.json")).Contains("\"Knowledge\"") &&
+                    !File.ReadAllText(envelopePath).Contains("\"Knowledge\""),
+                    "decision and knowledge metadata do not modify model context or MessageEnvelope input");
                 return Task.FromResult(new ShadowAdapterResult("Converted", 1, null, null, true,
                     "Synthetic preview; no provider call", 26, DateTimeOffset.Now, 1));
             }, true, trace))
