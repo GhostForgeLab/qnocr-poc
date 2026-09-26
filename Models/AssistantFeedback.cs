@@ -11,13 +11,17 @@ public static class ReplyFeedbackTypes
 public sealed record ReplyFeedback(string ReplyPreviewId, string SessionId, string OriginalAiReply,
     string FinalHumanReply, string FeedbackType, DateTimeOffset RecordedAt, string OperatorId,
     string BuyerQuestion, string ProductId, int ContextMessageCount,
-    string ProductReferenceAssessment = "Unknown", string ContextAssessment = "Unknown");
+    string ProductReferenceAssessment = "Unknown", string ContextAssessment = "Unknown",
+    string QuestionCategory = "未分类", string? Reason = null, string? BatchId = null,
+    string? OperatorNote = null);
 
 /// <summary>Minimal consultation evidence, created only after explicit feedback.</summary>
 public sealed record ConversationSample(string ReplyPreviewId, string SessionId, string CaptureId,
     string BuyerQuestion, string AiSuggestion, string FinalHumanReply, string FeedbackType,
     string ProductId, IReadOnlyList<string> ObservedProductReferences, int ContextMessageCount,
-    DateTimeOffset CapturedAt, DateTimeOffset FeedbackAt);
+    DateTimeOffset CapturedAt, DateTimeOffset FeedbackAt,
+    string QuestionCategory = "未分类", string? Reason = null, string? BatchId = null,
+    string? OperatorNote = null);
 
 public sealed record AssistantFeedbackRecord(ReplyFeedback Feedback, ConversationSample Sample);
 

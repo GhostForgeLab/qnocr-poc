@@ -1,7 +1,33 @@
-# qnocr-poc V1.13
+# qnocr-poc V1.14
 
 独立的千牛视觉采集实验：窗口捕获 → 布局裁剪 → OCR → BuyerMessage → 统一MessageEnvelope。
 主程序使用 C# / .NET 8 / Windows；V1.0增加独立.NET Framework 4.8离线兼容性宿主，不修改qnbot。
+## V1.14 试运行Batch与人工结果标签
+
+每个 `EvaluationBatch` 绑定一个Shadow运行目录，保存BatchId、评价开始/结束时间、操作者声明的环境和操作员标签。
+一个Shadow运行只对应一个Batch；Batch时间是**评价周期**，历史运行可以在事后创建批次，不会把评价时间冒充消息捕获时间。
+
+```powershell
+$stateDir = 'Output/State/your-state-dir'
+$runDir = 'Output/Shadow/shadow_本轮运行目录'
+$operatorId = '当前操作员标签'
+$previewId = '要评价的ReplyPreviewId'
+$batchId = '从start结果读取的BatchId'
+
+dotnet run -- --assist-batch-start --state-dir $stateDir --run-dir $runDir --environment RealQianniuShadow --operator $operatorId
+# 示例：客服未采用AI建议，并人工标记原因和问题分类
+dotnet run -- --assist-batch-feedback $batchId --state-dir $stateDir --preview-id $previewId --operator $operatorId --type Rejected --category 售后 --reason 缺少商品信息 --final-text-file '本地UTF-8人工回复文件'
+dotnet run -- --assist-batch-report $batchId --state-dir $stateDir
+dotnet run -- --assist-batch-end $batchId --state-dir $stateDir --operator $operatorId
+```
+
+`Environment`可选 `RealQianniuShadow`、`HistoricalReview`、`IsolatedFixture`，是操作员声明而非自动核验；`--operator`也是本地审计标签，不构成账号认证。
+已复制且未修改AI回复时可评价 `Accepted`；已人工修改并复制时可评价 `Edited`；不采用时评价 `Rejected`。
+人工原话评价可通过 `--note-file` 留存为脱敏备注；`Edited/Rejected`必须手动选择原因：`信息不准确`、`语气问题`、`缺少商品信息`、`其他`；分类可选 `商品规格`、`材质`、`价格`、`发货`、`售后`、`其他`。
+每条预览反馈只写一次；关闭Batch后不能追加。批次报告显示总咨询Session、消息、AI建议、采用/修改/拒绝、反馈覆盖率、类别/原因计数和人工标记的缺商品信息问题。
+比率分母是**已评价建议**，未评价建议另计；Batch不自动判断问题类别或知识缺口。样本仍按V1.13规则脱敏，原始预览须本地保护；不自动训练、不构建知识库、不调用发送。
+详见 [VALIDATION_V114.md](VALIDATION_V114.md)。
+
 ## V1.13 真实辅助运行统计与反馈
 
 `--assist-dashboard` 按Shadow运行批次读取状态目录与该批次的 `session.json`、`health.jsonl` 或 `summary.json`，展示运行时间、帧、消息、Session、AI建议、人工编辑动作、复制动作、反馈和安全状态。
@@ -843,5 +869,5 @@ dotnet run 2>&1 | Tee-Object -FilePath Output/run.log
 截图和原始日志保留在本地 Output，不进入 Git。
 历史实测：V0.1 [VALIDATION.md](VALIDATION.md)，V0.2 [VALIDATION_V02.md](VALIDATION_V02.md)。
 
-V1.13已具备按运行批次统计、人工反馈与会话样本记录；真实平台Buyer身份仍未验证，工作台不会发送消息。
+V1.14已具备按Batch沉淀人工分类、原因和辅助结果；真实平台Buyer身份仍未验证，工作台不会发送消息。
 UIA仍仅用于几何定位，不读取消息或商品ID文本；qnbot核心与MessageEnvelope未修改。

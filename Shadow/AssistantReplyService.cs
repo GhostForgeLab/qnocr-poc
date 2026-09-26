@@ -151,7 +151,9 @@ public sealed class AssistantReplyService(string stateRoot)
         return View(preview, state);
     }
     public AssistantFeedbackRecord RecordFeedback(string previewId, string operatorId, string feedbackType,
-        string? rejectedFinalReply = null, string productAssessment = "Unknown", string contextAssessment = "Unknown")
+        string? rejectedFinalReply = null, string productAssessment = "Unknown", string contextAssessment = "Unknown",
+        string questionCategory = "未分类", string? reason = null, string? batchId = null,
+        string? operatorNote = null)
     {
         ValidateOperator(operatorId);
         if (feedbackType is not (ReplyFeedbackTypes.Accepted or ReplyFeedbackTypes.Edited or ReplyFeedbackTypes.Rejected))
@@ -160,6 +162,14 @@ public sealed class AssistantReplyService(string stateRoot)
             throw new ArgumentException("Product assessment must be Unknown, Correct or Incorrect.", nameof(productAssessment));
         if (contextAssessment is not ("Unknown" or "Continued" or "Lost"))
             throw new ArgumentException("Context assessment must be Unknown, Continued or Lost.", nameof(contextAssessment));
+        if (questionCategory is not ("未分类" or "商品规格" or "材质" or "价格" or "发货" or "售后" or "其他"))
+            throw new ArgumentException("Unsupported question category.", nameof(questionCategory));
+        if (reason is not null and not ("信息不准确" or "语气问题" or "缺少商品信息" or "其他"))
+            throw new ArgumentException("Unsupported feedback reason.", nameof(reason));
+        if (batchId is not null && (batchId.Length != 32 || !batchId.All(Uri.IsHexDigit)))
+            throw new ArgumentException("BatchId must be 32 hexadecimal characters.", nameof(batchId));
+        if (operatorNote is { Length: > 1000 })
+            throw new ArgumentException("Operator note may contain at most 1000 characters.", nameof(operatorNote));
         if (rejectedFinalReply is { Length: > 4000 })
             throw new ArgumentException("Final reply may contain at most 4000 characters.", nameof(rejectedFinalReply));
         var (folder, preview) = Find(previewId) ?? throw new FileNotFoundException("Reply preview not found.");
@@ -182,13 +192,14 @@ public sealed class AssistantReplyService(string stateRoot)
         var safeQuestion = AssistantSampleRedactor.Redact(question);
         var safeAi = AssistantSampleRedactor.Redact(preview.Reply);
         var safeFinal = AssistantSampleRedactor.Redact(final);
+        var safeNote = operatorNote is null ? null : AssistantSampleRedactor.Redact(operatorNote);
         var feedback = new ReplyFeedback(preview.ReplyPreviewId, preview.SessionId, safeAi, safeFinal,
             feedbackType, now, operatorId, safeQuestion, preview.Input.ProductId, preview.Input.Messages.Count,
-            productAssessment, contextAssessment);
+            productAssessment, contextAssessment, questionCategory, reason, batchId, safeNote);
         var sample = new ConversationSample(preview.ReplyPreviewId, preview.SessionId, preview.CaptureId,
             safeQuestion, safeAi, safeFinal, feedbackType, preview.Input.ProductId,
             (preview.Input.ProductReferences ?? Array.Empty<ProductReference>()).Select(r => r.ProductId).Distinct(StringComparer.Ordinal).ToArray(),
-            preview.Input.Messages.Count, preview.Input.CapturedAt, now);
+            preview.Input.Messages.Count, preview.Input.CapturedAt, now, questionCategory, reason, batchId, safeNote);
         var record = new AssistantFeedbackRecord(feedback, sample);
         AtomicJson.Write(path, record);
         Append(preview, state, "FEEDBACK_RECORDED", operatorId, feedbackType + "; local redacted sample, no model training or send action.");

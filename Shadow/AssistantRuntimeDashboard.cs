@@ -63,6 +63,13 @@ public sealed class AssistantRuntimeDashboard(string stateRoot, string runDirect
                 preview.Input.CapturedAt, default))
             .OrderBy(s => s.CapturedAt).ToArray();
     }
+    public IReadOnlyList<AssistantFeedbackRecord> FeedbackRecords()
+    {
+        ReadRunMetadata();
+        var (_, _, feedback, _) = ReadState();
+        return feedback.OrderBy(f => f.Feedback.RecordedAt).ToArray();
+    }
+
     public IReadOnlyList<SessionObservation> Sessions()
     {
         ReadRunMetadata();
