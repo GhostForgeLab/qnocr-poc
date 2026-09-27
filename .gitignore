@@ -4,3 +4,4 @@ obj/
 Output/*
 !Output/.gitkeep
 KnowledgeConsole/Output/
+AgentConsole/Output/

@@ -17,6 +17,7 @@
     <Compile Remove="Validation/**/*.cs" />
     <Compile Remove="Output/**/*.cs" />
     <Compile Remove="KnowledgeConsole/**/*.cs" />
+    <Compile Remove="AgentConsole/**/*.cs" />
     <Compile Remove="Integration/**/*.cs" />
     <None Update="Product/product-profiles.sample.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <PackageReference Include="Sdcb.PaddleOCR" Version="3.3.1" />

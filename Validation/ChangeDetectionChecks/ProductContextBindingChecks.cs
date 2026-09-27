@@ -200,7 +200,11 @@ internal static class ProductContextBindingChecks
             hostMissing.GetProperty("SentMessages").GetInt32() == 0,
             "isolated qnbot host accepts missing context sidecar without product facts or send");
         manual.Clear(session.SessionId, "operator-test");
+        var afterClear = JsonSerializer.Deserialize<MessageSession>(File.ReadAllText(Path.Combine(root,
+            "sessions", session.SessionId, "session.json")))!;
         check(manual.Resolve(session, null, at.AddSeconds(8), "capture-cleared") is null &&
+            afterClear.CurrentProductContext is null &&
+            afterClear.ProductContextBindingStatus == ProductContextBindingStatus.Unknown &&
             File.ReadAllText(Path.Combine(root, "product-context-audit.jsonl")).Contains("PRODUCT_CONTEXT_CLEARED"),
             "operator clear removes the active manual choice without deleting historical audit");
         check(!Directory.EnumerateFiles(root, "send-request.json", SearchOption.AllDirectories).Any(),

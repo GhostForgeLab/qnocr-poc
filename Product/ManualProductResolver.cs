@@ -50,6 +50,21 @@ public sealed class ManualProductResolver(string stateRoot) : IProductContextRes
         var old = JsonSerializer.Deserialize<BoundProductContext>(File.ReadAllText(path))
             ?? throw new InvalidDataException("Manual binding is unreadable.");
         File.Delete(path);
+        var sessionPath = SessionPath(sessionId);
+        if (File.Exists(sessionPath))
+        {
+            var session = JsonSerializer.Deserialize<MessageSession>(File.ReadAllText(sessionPath));
+            if (session is not null &&
+                (session.CurrentProductContext?.Source == ProductContextSource.Manual &&
+                 session.CurrentProductContext.ProductId == old.ProductId ||
+                 session.ProductContextBindingStatus is ProductContextBindingStatus.Conflict or
+                    ProductContextBindingStatus.Uncertain))
+                AtomicJson.Write(sessionPath, session with
+                {
+                    CurrentProductContext = null,
+                    ProductContextBindingStatus = ProductContextBindingStatus.Unknown
+                });
+        }
         RunLogWriter.Append(_root, "product-context-audit.jsonl", new
         {
             Event = "PRODUCT_CONTEXT_CLEARED", old.SessionId, old.SellerId, old.ProductId,
