@@ -1,4 +1,6 @@
 using System.Text.Json;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json.Serialization;
 using QnocrPoc.Models;
 
@@ -52,9 +54,10 @@ public sealed class KnowledgeAuthoringService
         var now = DateTimeOffset.UtcNow;
         var profile = new ProductKnowledgeProfile(
             new ProductKnowledgeIdentity(input.SellerId, input.ProductId, input.Name),
-            input.Capacity is null ? null : new ProductSpecification(input.Capacity),
+            input.Capacity is null && input.Size is null && input.Weight is null ? null :
+                new ProductSpecification(input.Capacity, input.Size, input.Weight),
             input.Material is null ? null : new ProductMaterial(input.Material),
-            input.Features,
+            input.Features, FAQ: input.FAQ, Restrictions: input.Restrictions,
             Metadata: new ProductKnowledgeMetadata("LocalAuthoringInput", input.Version, now, true));
         var validationRecord = new ProductKnowledgeRecord(input.ProductId, new(),
             "LocalAuthoringInput", now, true, input.SellerId, input.Version, profile);
@@ -62,12 +65,21 @@ public sealed class KnowledgeAuthoringService
         var facts = new List<(string Category, string Key, string Value)>();
         if (input.Capacity is { Count: > 0 })
             facts.Add((KnowledgeCategories.Specification, "Capacity", string.Join(", ", input.Capacity)));
+        if (input.Size is not null) facts.Add((KnowledgeCategories.Specification, "Size", input.Size));
+        if (input.Weight is not null) facts.Add((KnowledgeCategories.Specification, "Weight", input.Weight));
         if (input.Material is not null)
             facts.Add((KnowledgeCategories.Material, "Material", input.Material));
         if (input.Features is not null)
             facts.AddRange(input.Features.Select(feature =>
                 (KnowledgeCategories.Feature, "Feature:" + feature.FeatureName,
                     feature.Description ?? feature.FeatureName)));
+        if (input.FAQ is not null)
+            facts.AddRange(input.FAQ.Select(entry =>
+                (KnowledgeCategories.FAQ, "FAQ:" + Convert.ToHexString(
+                    SHA256.HashData(Encoding.UTF8.GetBytes(entry.Question)))[..12], entry.Answer)));
+        if (input.Restrictions is not null)
+            facts.AddRange(input.Restrictions.Select((restriction, index) =>
+                (KnowledgeCategories.Restriction, "Restriction:" + (index + 1), restriction.RestrictionText)));
         if (facts.Count == 0 || facts.Count > 18 || facts.Any(fact => fact.Value.Length > 200 || fact.Key.Length > 128) ||
             facts.Select(fact => fact.Key).Distinct(StringComparer.Ordinal).Count() != facts.Count)
             throw new InvalidDataException("Draft needs 1–18 distinct bounded fields.");
@@ -96,6 +108,11 @@ public sealed class KnowledgeAuthoringService
         }) + Environment.NewLine);
         return draft;
     }
+
+    public IReadOnlyList<KnowledgeDraft> ListDrafts() =>
+        Directory.EnumerateFiles(_draftsDirectory, "*.json")
+            .Select(path => GetDraft(Path.GetFileNameWithoutExtension(path)))
+            .OrderByDescending(draft => draft.CreatedAt).ToArray();
 
     public KnowledgeDraft GetDraft(string draftId)
     {

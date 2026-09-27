@@ -9,7 +9,8 @@ public enum KnowledgeDraftStatus { Draft, Reviewing, Approved, Rejected, Conflic
 public sealed record ProductKnowledgeAuthoringInput(string SellerId, string ProductId, string Name,
     string Version, KnowledgeSource Source, bool IsTestData,
     IReadOnlyList<string>? Capacity = null, string? Material = null,
-    IReadOnlyList<ProductFeature>? Features = null);
+    IReadOnlyList<ProductFeature>? Features = null, string? Size = null, string? Weight = null,
+    IReadOnlyList<ProductFAQ>? FAQ = null, IReadOnlyList<ProductRestriction>? Restrictions = null);
 
 /// <summary>Authored profile and links to individually reviewed knowledge items.</summary>
 public sealed record KnowledgeDraft(string DraftId, string SellerId, string ProductId,

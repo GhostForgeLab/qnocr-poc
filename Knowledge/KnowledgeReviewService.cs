@@ -86,6 +86,30 @@ public sealed class KnowledgeReviewService
         }
         return created;
     }
+    public KnowledgeItem EditDraft(string knowledgeId, string value, string actor)
+    {
+        Require(knowledgeId, nameof(knowledgeId)); Require(value, nameof(value)); Require(actor, nameof(actor));
+        if (value.Length > 200 || value.Any(ch => char.IsControl(ch) || ch is '<' or '>' or '{' or '}'))
+            throw new ArgumentException("Invalid bounded knowledge value.", nameof(value));
+        lock (_gate)
+        {
+            var items = Read();
+            var index = items.FindIndex(item => item.KnowledgeId == knowledgeId);
+            if (index < 0) throw new KeyNotFoundException("Knowledge item not found.");
+            var before = items[index];
+            if (before.Status != KnowledgeStatus.Draft)
+                throw new InvalidOperationException("Only Draft knowledge may be edited.");
+            if (items.Any(item => item.KnowledgeId != knowledgeId && item.SellerId == before.SellerId &&
+                item.ProductId == before.ProductId && item.Key == before.Key &&
+                item.Status == KnowledgeStatus.Published && item.AiUseAllowed && item.Value != value))
+                throw new InvalidOperationException("A published value differs; create a revision instead.");
+            var updated = before with { Value = value, UpdatedAt = DateTimeOffset.UtcNow };
+            items[index] = updated;
+            Audit("KNOWLEDGE_DRAFT_EDITED", updated, actor);
+            Save(items);
+            return updated;
+        }
+    }
     public KnowledgeItem SubmitForReview(string knowledgeId, string actor) =>
         Transition(knowledgeId, KnowledgeStatus.Draft, KnowledgeStatus.Reviewing, actor);
 

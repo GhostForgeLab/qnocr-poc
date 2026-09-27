@@ -60,6 +60,11 @@ public sealed class KnowledgeRevisionService
         return revision;
     }
 
+    public IReadOnlyList<KnowledgeRevision> ListRevisions() =>
+        Directory.EnumerateFiles(_root, "*.json")
+            .Select(path => GetRevision(Path.GetFileNameWithoutExtension(path)))
+            .OrderByDescending(revision => revision.CreatedAt).ToArray();
+
     public KnowledgeRevision GetRevision(string revisionId)
     {
         if (revisionId.Length != 32 || !revisionId.All(Uri.IsHexDigit))

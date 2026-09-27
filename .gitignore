@@ -3,3 +3,4 @@ obj/
 .tools/
 Output/*
 !Output/.gitkeep
+KnowledgeConsole/Output/
