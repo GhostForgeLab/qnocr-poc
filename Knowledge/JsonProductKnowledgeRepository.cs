@@ -34,11 +34,14 @@ public sealed class JsonProductKnowledgeRepository : IProductKnowledgeRepository
                 !record.ProductId.All(char.IsAsciiDigit) ||
                 string.IsNullOrWhiteSpace(record.Version) || record.Version.Length > 64 ||
                 record.Source != "LocalTestProductConfig" || !record.IsTestData || record.UpdatedAt == default ||
-                record.Fields is null || record.Fields.Count is < 1 or > 3 ||
+                record.Fields is null || record.Fields.Count > 3 ||
+                record.Fields.Count == 0 && record.Profile is null ||
                 record.Fields.Keys.Any(key => !AllowedFields.Contains(key)) ||
                 record.Fields.Values.Any(value => string.IsNullOrWhiteSpace(value) || value.Length > 200 ||
                     value.Any(ch => char.IsControl(ch) || ch is '<' or '>' or '{' or '}')))
                 throw new InvalidDataException("Repository accepts only bounded, store-scoped local test data.");
+            if (record.Profile is not null)
+                ProductKnowledgeSchemaValidator.Validate(record.Profile, record);
             if (!_records.TryAdd((record.SellerId, record.ProductId), record))
                 throw new InvalidDataException("Duplicate SellerId/ProductId in test source.");
         }
@@ -51,6 +54,10 @@ public sealed class JsonProductKnowledgeRepository : IProductKnowledgeRepository
         if (!_records.TryGetValue((sellerId, productId), out var record))
             return Task.FromResult<ProductKnowledgeRecord?>(null);
         return Task.FromResult<ProductKnowledgeRecord?>(record with
-        { Fields = new Dictionary<string, string>(record.Fields, StringComparer.Ordinal) });
+        {
+            Fields = new Dictionary<string, string>(record.Fields, StringComparer.Ordinal),
+            Profile = record.Profile is null ? null :
+                JsonSerializer.Deserialize<ProductKnowledgeProfile>(JsonSerializer.Serialize(record.Profile))
+        });
     }
 }

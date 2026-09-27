@@ -1,7 +1,15 @@
-# qnocr-poc V1.19
+# qnocr-poc V1.20
 
 独立的千牛视觉采集实验：窗口捕获 → 布局裁剪 → OCR → BuyerMessage → 统一MessageEnvelope。
 主程序使用 C# / .NET 8 / Windows；V1.0增加独立.NET Framework 4.8离线兼容性宿主，不修改qnbot。
+
+## V1.20 Product Knowledge Schema 商品知识模型
+
+`ProductKnowledgeProfile`将未来来源统一映射为Identity、Specification、Material、Features、Scenarios、FAQ、AfterSales、Restrictions和Metadata等**可选知识分区**；其中Identity的SellerId/ProductId必填。Schema校验限定字段长度、结构及外层商品/店铺与元数据一致性。`ProductKnowledgeRecord.Profile`为可选字段，旧`Fields` JSON继续可读；同一字段若新旧值冲突则拒绝，不静默选一份事实。
+
+[Knowledge/product-knowledge.schema.sample.json](Knowledge/product-knowledge.schema.sample.json) 只有**一条合成商品**，包含规格、材质、一个FAQ和一条限制。Provider目前只把明确请求的规格或材质映射为KnowledgeResult，标注`KnowledgeCategory=Specification/Material`；多类别结果标`Mixed`。FAQ、限制、卖点与场景先定义结构和校验，**不自动检索、不注入AI输入**。
+
+Schema文件可作为JSON、数据库、ERP或后台数据的未来目标形状，但本阶段没有真实商品导入、知识库运营后台、RAG、向量数据库、自动知识生成或自动修改。隔离AI宿主继续只接收已请求且有来源的测试字段，MessageEnvelope和qnbot核心Prompt不变。验证见 [VALIDATION_V120.md](VALIDATION_V120.md)。
 
 ## V1.19 多商品 Knowledge Repository基础架构
 
@@ -945,5 +953,5 @@ dotnet run 2>&1 | Tee-Object -FilePath Output/run.log
 截图和原始日志保留在本地 Output，不进入 Git。
 历史实测：V0.1 [VALIDATION.md](VALIDATION.md)，V0.2 [VALIDATION_V02.md](VALIDATION_V02.md)。
 
-V1.19已具备店铺作用域的多商品测试Repository与Knowledge版本元数据；真实平台Buyer身份仍未验证，工作台不会发送消息。
+V1.20已具备兼容旧Fields的结构化商品知识Profile；真实平台Buyer身份仍未验证，工作台不会发送消息。
 UIA仍仅用于几何定位，不读取消息或商品ID文本；qnbot核心与MessageEnvelope未修改。

@@ -188,6 +188,7 @@ public sealed class DurableShadowDispatch : IDisposable
                                 { knowledge.Success, knowledge.Source, knowledge.Confidence, knowledge.MissingFields,
                                     ReturnedFields = knowledge.ReturnedFields?.Keys.ToArray(),
                                     knowledge.MissingProduct, knowledge.ProductVersion, knowledge.SellerId,
+                                    knowledge.KnowledgeCategory,
                                     Status = knowledgeStatus });
                             }
                             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -252,7 +253,8 @@ public sealed class DurableShadowDispatch : IDisposable
                         var preview = new ReplyPreview(item.Session.SessionId, item.Session.BuyerId, context, result.ReplySuggestion!,
                             null, DateTimeOffset.Now, "Shadow", item.CaptureId ?? "", context.AiRequestId, aiResponseId!, Guid.NewGuid().ToString("N"), decision, knowledgeStatus,
                             knowledgeResult?.Source, knowledgeUsedByAi, knowledgeGuardApplied,
-                            knowledgeResult?.ProductVersion, knowledgeResult?.MissingProduct ?? false);
+                            knowledgeResult?.ProductVersion, knowledgeResult?.MissingProduct ?? false,
+                            knowledgeResult?.KnowledgeCategory);
                         try
                         {
                             AtomicJson.Write(Path.Combine(Folder(item), "reply-preview.json"), preview);

@@ -4,7 +4,8 @@ namespace QnocrPoc.Models;
 public sealed record KnowledgeResult(bool Success, string Source, double? Confidence,
     string Content, IReadOnlyList<string> MissingFields,
     IReadOnlyDictionary<string, string>? ReturnedFields = null, DateTimeOffset? UpdatedAt = null,
-    bool MissingProduct = false, string? ProductVersion = null, string? SellerId = null);
+    bool MissingProduct = false, string? ProductVersion = null, string? SellerId = null,
+    string? KnowledgeCategory = null);
 
 public static class KnowledgeStatuses
 {

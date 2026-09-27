@@ -9,7 +9,7 @@ namespace QnocrPoc.Knowledge;
 public static class KnowledgeModelContextWriter
 {
     private static readonly HashSet<string> AllowedFacts = new(StringComparer.Ordinal)
-    { "Capacity", "Material", "CustomizationPolicy" };
+    { "Capacity", "Size", "Weight", "Material", "CustomizationPolicy" };
 
     public static KnowledgeContextView Write(string path, SessionContextView context,
         KnowledgeRequest request, KnowledgeResult result, string status)
@@ -35,7 +35,8 @@ public static class KnowledgeModelContextWriter
         var view = new KnowledgeContextView(available ? KnowledgeStatuses.Available : KnowledgeStatuses.Missing,
             context.ProductId, available ? result.Source : "None", facts,
             available ? Array.Empty<string>() : result.MissingFields, available, available ? result.UpdatedAt : null,
-            request.SellerId, available ? result.ProductVersion : null, result.MissingProduct);
+            request.SellerId, available ? result.ProductVersion : null, result.MissingProduct,
+            result.KnowledgeCategory);
         var node = JsonSerializer.SerializeToNode(context)?.AsObject()
             ?? throw new InvalidDataException("Session context cannot be serialized.");
         node["Knowledge"] = JsonSerializer.SerializeToNode(view);

@@ -1,0 +1,41 @@
+{
+  "SellerId": "seller-test",
+  "ProductId": "3000000000002",
+  "Version": "schema-test-v1",
+  "Source": "LocalTestProductConfig",
+  "UpdatedAt": "2026-09-27T00:00:00+08:00",
+  "IsTestData": true,
+  "Fields": {},
+  "Profile": {
+    "Identity": {
+      "SellerId": "seller-test",
+      "ProductId": "3000000000002"
+    },
+    "Specification": {
+      "Capacity": ["100ml", "200ml"],
+      "Size": "测试尺寸",
+      "Weight": "测试重量"
+    },
+    "Material": {
+      "MaterialName": "TA1纯钛",
+      "Description": "仅供Schema验证的合成材质说明"
+    },
+    "FAQ": [
+      {
+        "Question": "是否支持刻字？",
+        "Answer": "测试样例：支持刻字；真实能力须核实。"
+      }
+    ],
+    "Restrictions": [
+      {
+        "RestrictionText": "仅用于接口测试，不得作为真实商品承诺。"
+      }
+    ],
+    "Metadata": {
+      "Source": "LocalTestProductConfig",
+      "Version": "schema-test-v1",
+      "UpdatedAt": "2026-09-27T00:00:00+08:00",
+      "IsTestData": true
+    }
+  }
+}

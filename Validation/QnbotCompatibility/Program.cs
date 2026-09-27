@@ -322,7 +322,8 @@ namespace CompatibilityHost
             if (knowledge.Status == "Available")
             {
                 result.Append("SellerId: ").Append(knowledge.SellerId).Append("; ProductId: ").Append(knowledge.ProductId)
-                    .Append("; Version: ").Append(knowledge.ProductVersion).Append("; Source: ").Append(knowledge.Source).Append('\n');
+                    .Append("; Version: ").Append(knowledge.ProductVersion).Append("; Source: ").Append(knowledge.Source)
+                    .Append("; Category: ").Append(knowledge.KnowledgeCategory).Append('\n');
                 foreach (var fact in knowledge.FactFields.OrderBy(pair => pair.Key, StringComparer.Ordinal))
                     result.Append(fact.Key).Append(": ").Append(fact.Value).Append('\n');
             }
@@ -335,7 +336,7 @@ namespace CompatibilityHost
             var knowledge = context.Knowledge;
             if (knowledge == null) return;
             var allowed = new HashSet<string>(StringComparer.Ordinal)
-            { "Capacity", "Material", "CustomizationPolicy", "Waterproof", "ShippingTime",
+            { "Capacity", "Size", "Weight", "Material", "CustomizationPolicy", "Waterproof", "ShippingTime",
                 "ReturnPolicy", "CurrentPrice", "Specification", "Unspecified" };
             if (knowledge.ProductId != envelope.ProductId || knowledge.SellerId != envelope.SellerId ||
                 knowledge.FactFields == null || knowledge.MissingFields == null ||
@@ -347,6 +348,8 @@ namespace CompatibilityHost
                 if (string.IsNullOrWhiteSpace(knowledge.ProductId) || string.IsNullOrWhiteSpace(knowledge.SellerId) ||
                     string.IsNullOrWhiteSpace(knowledge.ProductVersion) || knowledge.ProductVersion.Length > 64 ||
                     knowledge.Source != "LocalTestProductConfig" || knowledge.MissingProduct ||
+                    (knowledge.KnowledgeCategory != null && !new[] { "Specification", "Material", "Feature", "Scenario",
+                        "FAQ", "AfterSales", "Restriction", "Mixed", "Unknown" }.Contains(knowledge.KnowledgeCategory)) ||
                     !knowledge.IsTestData || knowledge.FactFields.Count < 1 || knowledge.FactFields.Count > 3 ||
                     knowledge.MissingFields.Count != 0 || knowledge.FactFields.Values.Any(value =>
                         string.IsNullOrWhiteSpace(value) || value.Length > 200 ||
@@ -397,6 +400,7 @@ namespace CompatibilityHost
                 AiInvoked = false, AiCalls = 0, SendEnabled = false, SentMessages = 0,
                 KnowledgeStatus = context.Knowledge == null ? null : context.Knowledge.Status,
                 KnowledgeProductVersion = context.Knowledge == null ? null : context.Knowledge.ProductVersion,
+                KnowledgeCategory = context.Knowledge == null ? null : context.Knowledge.KnowledgeCategory,
                 KnowledgeSellerId = context.Knowledge == null ? null : context.Knowledge.SellerId,
                 MissingProduct = context.Knowledge != null && context.Knowledge.MissingProduct,
                 KnowledgeFactsPresent = payload[2] == 1,

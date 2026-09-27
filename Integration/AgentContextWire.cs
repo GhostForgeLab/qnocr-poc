@@ -35,6 +35,7 @@ namespace QnocrPoc.Integration.Wire
         public string SellerId { get; set; }
         public string ProductVersion { get; set; }
         public bool MissingProduct { get; set; }
+        public string KnowledgeCategory { get; set; }
     }
     public sealed class BuyerIdentityWire
     {
