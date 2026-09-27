@@ -1,4 +1,7 @@
 using System.Text.Json;
+using System.Net;
+using System.Net.Http;
+using System.Text;
 using QnocrPoc.Decision;
 using QnocrPoc.Knowledge;
 using QnocrPoc.Models;
@@ -7,6 +10,26 @@ using QnocrPoc.Shadow;
 
 internal static class ProductContextBindingChecks
 {
+    private sealed class JevHandler : HttpMessageHandler
+    {
+        public int Calls { get; private set; }
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            Calls++;
+            var names = new[] { "PRODUCT_SPEC_QUERY", "MATERIAL_QUERY", "SHIPPING_QUERY",
+                "CUSTOMIZATION_QUERY", "PRICE_QUERY", "AFTER_SALES_QUERY", "GIFT_QUERY",
+                "COLLECTION_QUERY", "OTHER" };
+            var probabilities = names.ToDictionary(name => name,
+                name => name == "PRODUCT_SPEC_QUERY" ? 1.0 : 0.0);
+            var response = JsonSerializer.Serialize(new { model = "jev-v129-fixture", answers = new
+            {
+                intent = new { type = "choice", choice = "PRODUCT_SPEC_QUERY", confidence = 1.0, probabilities }
+            } });
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            { Content = new StringContent(response, Encoding.UTF8, "application/json") });
+        }
+    }
     private sealed class CountingKnowledge : IKnowledgeProvider
     {
         public int Calls { get; private set; }
@@ -69,6 +92,12 @@ internal static class ProductContextBindingChecks
         var run = Path.Combine(root, "run"); var state = Path.Combine(root, "dispatch");
         var dispatchItem = Item(session, context, true);
         var aiCalls = 0;
+        var jevHandler = new JevHandler();
+        using var jevClient = new HttpClient(jevHandler);
+        var agentTrace = new AgentPipelineTrace(run);
+        using var intentSelection = IntentClassifierFactory.Create(
+            Path.GetFullPath("Config/intent-provider.json"), agentTrace.IntentProviderObserved,
+            jevClient, () => "test-key");
         using (var dispatch = new DurableShadowDispatch(state, Path.Combine(run, "lifecycle.jsonl"), CancellationToken.None,
             (_, _, attempt, _) =>
             {
@@ -80,15 +109,19 @@ internal static class ProductContextBindingChecks
                     "AI sidecar contains only requested bound Capacity and current product ID");
                 return Task.FromResult(new ShadowAdapterResult("Converted", 1, null, null, true,
                     "测试商品有200ml规格。", 30, DateTimeOffset.UtcNow, 1));
-            }, true, new AgentPipelineTrace(run), knowledgeProvider: provider, enrichAiContext: true))
+            }, true, agentTrace, intentClassifier: intentSelection.Classifier,
+            knowledgeProvider: provider, enrichAiContext: true))
         {
             dispatch.Submit(dispatchItem, context); dispatch.Start(); await dispatch.StopAsync();
         }
         var preview = JsonSerializer.Deserialize<ReplyPreview>(File.ReadAllText(Path.Combine(state,
             "outbox", dispatchItem.MessageId, "reply-preview.json")))!;
-        check(aiCalls == 1 && preview.KnowledgeStatus == KnowledgeStatuses.Available &&
+        check(aiCalls == 1 && jevHandler.Calls == 1 &&
+            preview.Decision?.IntentName == "PRODUCT_SPEC_QUERY" &&
+            preview.Decision.RuleVersion == "JEV/jev-v129-fixture" &&
+            preview.KnowledgeStatus == KnowledgeStatuses.Available &&
             preview.KnowledgeUsedByAi && preview.SendStatus == "Shadow" && preview.Reply.Contains("200ml"),
-            "manual binding reaches one synthetic AI reply preview with KnowledgeUsedByAi=true and no send");
+            "JEV intent plus manual binding reaches a KnowledgeUsedByAi=true Shadow preview with no send");
         var hostAvailable = HostContextCheck(Path.Combine(state, "outbox", dispatchItem.MessageId),
             session.IdentityPath!, Path.Combine(root, "host-available"));
         check(hostAvailable.GetProperty("KnowledgeFactsPresent").GetBoolean() &&
