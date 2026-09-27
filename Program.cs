@@ -33,7 +33,7 @@ if (args.Length == 3 && args[0] == "--ocr-worker")
 }
 
 Console.OutputEncoding = Encoding.UTF8;
-Console.WriteLine("[QN OCR POC V1.27]");
+Console.WriteLine("[QN OCR POC V1.28]");
 Console.WriteLine($"Time: {DateTimeOffset.Now:O}");
 Console.WriteLine($"Runtime: {System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription}");
 var operation = "Capture";
@@ -90,6 +90,22 @@ try
         var unavailable = comparisons.Count(item => item.Match is null);
         Console.WriteLine($"[Intent Comparison] total={comparisons.Count} matched={matched} different={different} unavailable={unavailable}; Output={Path.GetFullPath(args[3])}; AgentRuleBased=UNCHANGED; Send=OFF");
         return unavailable == 0 ? 0 : 3;
+    }
+    if (args.Length > 0 && args[0] == "--intent-review-list")
+    {
+        operation = "Intent human review";
+        if (args.Length != 2) return 2;
+        Console.WriteLine(JsonSerializer.Serialize(new IntentQualityReviewService(args[1]).List(),
+            new JsonSerializerOptions { WriteIndented = true }));
+        return 0;
+    }
+    if (args.Length > 0 && args[0] == "--intent-review-mark")
+    {
+        operation = "Intent human review";
+        if (args.Length != 5) return 2;
+        Console.WriteLine(JsonSerializer.Serialize(new IntentQualityReviewService(args[1])
+            .Mark(args[2], args[3], args[4])));
+        return 0;
     }
     if (args.Length > 0 && args[0] == "--shadow")
     {

@@ -71,6 +71,11 @@ internal static class ShadowChecks
         QnocrShadowRunner Runner() => new(Capture, (_, _) => Task.FromResult(Layout()), Ocr, displayNow: () => start);
         var result = await Runner().RunAsync(Options(4, mapping));
         check(result.Status == "Completed" && result.SuccessfulFrames == 4, "bounded Shadow replay completes");
+        using (var intent = JsonDocument.Parse(File.ReadAllText(Path.Combine(result.SessionDirectory, "intent-stats.json"))))
+            check(intent.RootElement.GetProperty("TotalIntentRequests").GetInt32() == 0 &&
+                result.TotalIntentRequests == 0 && result.AverageIntentLatencyMilliseconds == 0,
+                "AI-OFF Shadow run persists a zeroed intent statistics summary");
+
         check(result.ChatOcrCalls == 3 && result.ProductOcrCalls == 3, "each OCR pass reads current product, static frame skips OCR");
         check(result.NewMessages == 1 && result.BaselineMessages == 1 && result.DuplicateObservations == 1 && result.Envelopes == 1, "baseline plus repeated changed frames produce exactly one envelope");
         check(result.ConvertedMessages == 1 && result.ConvertedEnvelopes == 1, "new message traverses actual isolated adapter");

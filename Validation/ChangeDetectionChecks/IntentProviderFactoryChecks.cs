@@ -141,6 +141,15 @@ internal static class IntentProviderFactoryChecks
             preview.SendStatus == "Shadow" && preview.Reply.Length > 0,
             name + " classifier reaches the unchanged AI callback and creates one Shadow preview");
         var traceText = File.ReadAllText(Path.Combine(run, "agent-pipeline.jsonl"));
+        var results = File.ReadLines(Path.Combine(run, "agent-pipeline.jsonl"))
+            .Select(line => JsonDocument.Parse(line).RootElement.Clone())
+            .Where(row => row.GetProperty("Event").GetString() == "INTENT_PROVIDER_RESULT").ToArray();
+        check(results.Length == 1 && results[0].GetProperty("Provider").GetString() ==
+            (expectedFallback ? "RuleBased" : "JEV") &&
+            results[0].GetProperty("Intent").GetString() == expectedIntent &&
+            results[0].GetProperty("FallbackUsed").GetBoolean() == expectedFallback &&
+            results[0].GetProperty("IntentLatencyMilliseconds").GetDouble() >= 0,
+            name + " result trace records session, provider, intent, latency and fallback for one message");
         check(traceText.Contains("INTENT_PROVIDER_USED") &&
             traceText.Contains("\"FallbackUsed\":" + expectedFallback.ToString().ToLowerInvariant()) &&
             traceText.Contains("AI_RESPONSE") && traceText.Contains("REPLY_PREVIEW_CREATED"),

@@ -29,7 +29,8 @@ public sealed class AgentPipelineTrace(string runDirectory)
             observation.CaptureId ?? "", observation.SessionId, null, observation.MessageId,
             null, null, "", 0, null, null, observation.Reason,
             Intent: observation.Intent, Provider: observation.Provider,
-            FallbackUsed: observation.FallbackUsed));
+            FallbackUsed: observation.FallbackUsed,
+            IntentLatencyMilliseconds: observation.LatencyMilliseconds));
     public bool MessageCaptured(DispatchItem item)
     {
         var captureId = item.CaptureId ?? string.Empty;

@@ -26,7 +26,9 @@ public sealed record ShadowRunSummary(string Status, int Attempts, int Successfu
     bool SendEnabled = false, int SentMessages = 0, DateTimeOffset StartedAt = default, DateTimeOffset EndedAt = default,
     long PeakWorkingSetBytes = 0, int ProductReferences = 0, int ActiveSessions = 0, int InactiveSessions = 0,
     int ClosedSessions = 0, int ReopenedSessions = 0, int ConfirmedObservations = 0, int ErrorCount = 0,
-    long RunBytes = 0, long StateBytes = 0, int LogArchiveSegments = 0, int PersistedSessions = 0, int KnowledgeErrors = 0, bool ProductKnowledgeEnabled = false);
+    long RunBytes = 0, long StateBytes = 0, int LogArchiveSegments = 0, int PersistedSessions = 0, int KnowledgeErrors = 0, bool ProductKnowledgeEnabled = false,
+    int TotalIntentRequests = 0, int JEVSuccess = 0, int JEVFailure = 0,
+    int RuleFallbackCount = 0, double AverageIntentLatencyMilliseconds = 0);
 
 public sealed class QnocrShadowRunner
 {
@@ -83,9 +85,15 @@ public sealed class QnocrShadowRunner
         var registry = new SessionRegistry(stateRoot, run, mapping);
         var lifecycle = new SessionRunLifecycle(stateRoot, run);
         var agentTrace = new AgentPipelineTrace(run);
+        var intentStats = new IntentRuntimeStatistics();
+        Action<IntentProviderTrace> observeIntent = observation =>
+        {
+            intentStats.Observe(observation);
+            agentTrace.IntentProviderObserved(observation);
+        };
         using var intentSelection = options.IntentProviderConfigPath is null
-            ? IntentClassifierFactory.RuleOnly(agentTrace.IntentProviderObserved)
-            : IntentClassifierFactory.Create(options.IntentProviderConfigPath, agentTrace.IntentProviderObserved);
+            ? IntentClassifierFactory.RuleOnly(observeIntent)
+            : IntentClassifierFactory.Create(options.IntentProviderConfigPath, observeIntent);
         Console.WriteLine($"INTENT_PROVIDER_SELECTED: {intentSelection.SelectedProvider}; FallbackUsed={intentSelection.FallbackUsed}");
 
         var native = new NativeWorkerClient();
@@ -107,14 +115,14 @@ public sealed class QnocrShadowRunner
         var runIds = new HashSet<string>(StringComparer.Ordinal); var sessionIds = new HashSet<string>(StringComparer.Ordinal);
         var outOfScopeMessages = 0;
         var status = "Completed";
-        AtomicJson.Write(Path.Combine(run, "session.json"), new { Version = "1.27", StartedAt = startedAt, StateDirectory = stateRoot,
+        AtomicJson.Write(Path.Combine(run, "session.json"), new { Version = "1.28", StartedAt = startedAt, StateDirectory = stateRoot,
             options.MaximumFrames, options.MaximumMinutes, options.MaxRunMegabytes, options.MaxStateMegabytes, AiEnabled = options.AiShadow, SendEnabled = false,
             AllowedAiSession = allowedAiSession, ProviderConfig = options.AiProviderConfigPath ?? "Config/ai-provider.json",
             Identity = "Per-buyer OCR label sessions; test identities are isolated, no platform identity inference",
             ProductKnowledgeEnabled = options.ProductKnowledgePath is not null,
             IntentProvider = intentSelection.SelectedProvider, IntentFallbackUsed = intentSelection.FallbackUsed,
             IntentProviderConfig = options.IntentProviderConfigPath });
-        Console.WriteLine($"[SHADOW V1.27] Session: {run}\nState: {stateRoot}\nAI={(options.AiShadow ? "ON" : "OFF")}; Send=OFF; first buyer snapshot is baseline. stop.request stops cleanly.");
+        Console.WriteLine($"[SHADOW V1.28] Session: {run}\nState: {stateRoot}\nAI={(options.AiShadow ? "ON" : "OFF")}; Send=OFF; first buyer snapshot is baseline. stop.request stops cleanly.");
         Console.WriteLine($"[Shadow Flags] AI_ENABLED={options.AiShadow.ToString().ToLowerInvariant()} SEND_ENABLED=false");
         try
         {
@@ -292,7 +300,7 @@ public sealed class QnocrShadowRunner
                         BuyerSessions = sessionMetrics.Observed, PersistedSessions = persistedSessionsNow,
                         sessionMetrics.Active, sessionMetrics.Inactive, sessionMetrics.Closed, sessionMetrics.Reopened,
                         ProductReferences = sessionMetrics.ProductReferences, AiCalls = aiCalls, ReplyPreviews = previews,
-                        KnowledgeErrors = dispatch.KnowledgeErrors,
+                        KnowledgeErrors = dispatch.KnowledgeErrors, Intent = intentStats.Snapshot(),
                         ErrorCount = errors, Pending = currentItems.Count(i => i.State is "Pending" or "Dispatching"),
                         Uncertain = currentItems.Count(i => i.State == "Uncertain"),
                         WorkingSetBytes = process.WorkingSet64, PeakWorkingSetBytes = peakWorkingSet,
@@ -338,6 +346,8 @@ public sealed class QnocrShadowRunner
             ? Directory.EnumerateDirectories(Path.Combine(stateRoot, "sessions")).Count() : 0;
         var errorCount = failures + recoveries + dispatch.JournalErrors + agentTrace.Errors + dispatch.KnowledgeErrors
             + current.Count(i => i.State is "AiFailed" or "Uncertain" or "DecisionFailed");
+        var intentFinal = intentStats.Snapshot();
+        AtomicJson.Write(Path.Combine(run, "intent-stats.json"), intentFinal);
         var summary = new ShadowRunSummary(status, attempts, frames, failures, productCalls, chatCalls, runIds.Count, completed, deferred, run,
             runIds.Count, baselines, duplicates, historical, completed, options.AiShadow, current.Count(i => i.AiInvoked), options.AiShadow ? completed : 0,
             watch.Elapsed.TotalSeconds, sessionIds.Count, current.Count(i => i.State == "Uncertain"), recoveries, dispatch.JournalErrors, stateRoot,
@@ -348,7 +358,10 @@ public sealed class QnocrShadowRunner
             ReopenedSessions: sessionStats.Reopened, ConfirmedObservations: confirmedObservations,
             ErrorCount: errorCount, RunBytes: runSize, StateBytes: stateSize,
             LogArchiveSegments: archiveSegments, PersistedSessions: persistedSessions,
-            KnowledgeErrors: dispatch.KnowledgeErrors, ProductKnowledgeEnabled: options.ProductKnowledgePath is not null);
+            KnowledgeErrors: dispatch.KnowledgeErrors, ProductKnowledgeEnabled: options.ProductKnowledgePath is not null,
+            TotalIntentRequests: intentFinal.TotalIntentRequests, JEVSuccess: intentFinal.JEVSuccess,
+            JEVFailure: intentFinal.JEVFailure, RuleFallbackCount: intentFinal.RuleFallbackCount,
+            AverageIntentLatencyMilliseconds: intentFinal.AverageLatencyMilliseconds);
         AtomicJson.Write(Path.Combine(run, "summary.json"), summary);
         Console.WriteLine($"[Shadow] stopped: {JsonSerializer.Serialize(summary)}");
         return summary;

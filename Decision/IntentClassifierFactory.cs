@@ -1,4 +1,5 @@
 using System.Net.Http;
+using System.Diagnostics;
 using System.Text.Json;
 using QnocrPoc.Models;
 
@@ -56,10 +57,12 @@ public static class IntentClassifierFactory
     }
 
     private static void Emit(Action<IntentProviderTrace>? trace, string eventName, string provider,
-        string? intent, bool fallbackUsed, SessionContextView? context, string? reason)
+        string? intent, bool fallbackUsed, SessionContextView? context, string? reason,
+        double? latencyMilliseconds = null)
     {
         trace?.Invoke(new IntentProviderTrace(eventName, provider, intent, fallbackUsed,
-            DateTimeOffset.UtcNow, context?.SessionId, context?.MessageId, context?.CaptureId, reason));
+            DateTimeOffset.UtcNow, context?.SessionId, context?.MessageId, context?.CaptureId, reason,
+            latencyMilliseconds));
     }
 
     private sealed class RuntimeClassifier(JEVIntentClassifier? jev,
@@ -68,24 +71,32 @@ public static class IntentClassifierFactory
         private readonly RuleBasedIntentClassifier _rule = new();
         public IntentResult Classify(SessionContextView context)
         {
+            var watch = Stopwatch.StartNew();
             if (jev is not null)
             {
                 try
                 {
                     var result = jev.Classify(context);
                     Emit(trace, "INTENT_PROVIDER_USED", "JEV", result.IntentName, false, context, null);
+                    Emit(trace, "INTENT_PROVIDER_RESULT", "JEV", result.IntentName, false, context, null,
+                        watch.Elapsed.TotalMilliseconds);
                     return result;
                 }
                 catch (Exception ex) when (ex is not OutOfMemoryException)
                 {
-                    Emit(trace, "JEV_PROVIDER_FAILED", "JEV", null, true, context, ex.GetType().Name);
+                    Emit(trace, "JEV_PROVIDER_FAILED", "JEV", null, true, context, ex.GetType().Name,
+                        watch.Elapsed.TotalMilliseconds);
                     var fallback = _rule.Classify(context);
                     Emit(trace, "INTENT_PROVIDER_USED", "RuleBased", fallback.IntentName, true, context, null);
+                    Emit(trace, "INTENT_PROVIDER_RESULT", "RuleBased", fallback.IntentName, true, context, null,
+                        watch.Elapsed.TotalMilliseconds);
                     return fallback;
                 }
             }
             var rule = _rule.Classify(context);
             Emit(trace, "INTENT_PROVIDER_USED", "RuleBased", rule.IntentName, startupFallback, context, null);
+            Emit(trace, "INTENT_PROVIDER_RESULT", "RuleBased", rule.IntentName, startupFallback, context, null,
+                watch.Elapsed.TotalMilliseconds);
             return rule;
         }
         public void Dispose() => jev?.Dispose();
