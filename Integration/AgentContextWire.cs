@@ -21,8 +21,22 @@ namespace QnocrPoc.Integration.Wire
         public int ModelInputMessageCount { get; set; }
         public List<EnvelopeMessage> Messages { get; set; }
         public KnowledgeContextWire Knowledge { get; set; }
+        public BoundProductContextWire CurrentProductContext { get; set; }
+        public string ProductContextBindingStatus { get; set; }
     }
 
+    public sealed class BoundProductContextWire
+    {
+        public string SessionId { get; set; }
+        public string SellerId { get; set; }
+        public string ProductId { get; set; }
+        public string ProductName { get; set; }
+        public string Source { get; set; }
+        public double? Confidence { get; set; }
+        public DateTimeOffset CapturedAt { get; set; }
+        public string BoundBy { get; set; }
+        public string CaptureId { get; set; }
+    }
     public sealed class KnowledgeContextWire
     {
         public string Status { get; set; }

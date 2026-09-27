@@ -78,6 +78,14 @@ internal static class ShadowChecks
 
         check(result.ChatOcrCalls == 3 && result.ProductOcrCalls == 3, "each OCR pass reads current product, static frame skips OCR");
         check(result.NewMessages == 1 && result.BaselineMessages == 1 && result.DuplicateObservations == 1 && result.Envelopes == 1, "baseline plus repeated changed frames produce exactly one envelope");
+        var currentSession = Directory.GetFiles(Path.Combine(result.StateDirectory!, "sessions"), "session.json", SearchOption.AllDirectories)
+            .Select(path => JsonSerializer.Deserialize<MessageSession>(File.ReadAllText(path)))
+            .Single(session => session is not null)!;
+        check(currentSession.ProductContextBindingStatus == ProductContextBindingStatus.Bound &&
+            currentSession.CurrentProductContext?.Source == ProductContextSource.OCR &&
+            currentSession.CurrentProductContext.ProductId == "1051087533910",
+            "Shadow runner persists same-frame OCR ProductContext on the active buyer session");
+
         check(result.ConvertedMessages == 1 && result.ConvertedEnvelopes == 1, "new message traverses actual isolated adapter");
         check(!Directory.GetFiles(Path.Combine(result.SessionDirectory, "frame_000001"), "envelope_*.json").Any(), "baseline has no envelope file");
         var contextPath = Directory.GetFiles(result.SessionDirectory, "session-context_*.json", SearchOption.AllDirectories).Single();

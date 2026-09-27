@@ -165,7 +165,13 @@ public sealed class DurableShadowDispatch : IDisposable
                             knowledgeRequest = request;
                             _agentTrace?.KnowledgeRequested(item, context, request);
                             KnowledgeResult knowledge;
-                            try
+                            if (request.MissingProductContext)
+                            {
+                                knowledge = new KnowledgeResult(false, "None", null, "", request.NeedFields,
+                                    MissingProduct: true);
+                                _agentTrace?.ProductContextMissing(item, context, request);
+                            }
+                            else try
                             {
                                 knowledge = await _knowledgeProvider.GetAsync(request, _token);
                                 if (knowledge is null || string.IsNullOrWhiteSpace(knowledge.Source) ||
@@ -180,15 +186,16 @@ public sealed class DurableShadowDispatch : IDisposable
                                 _agentTrace?.KnowledgeError(item, context, request, ex.GetType().Name);
                                 knowledge = new KnowledgeResult(false, "None", null, "", request.NeedFields);
                             }
-                            knowledgeStatus = knowledge.Success && knowledge.MissingFields.Count == 0
-                                ? KnowledgeStatuses.Available : KnowledgeStatuses.Missing;
+                            knowledgeStatus = request.MissingProductContext ? KnowledgeStatuses.MissingProductContext :
+                                knowledge.Success && knowledge.MissingFields.Count == 0
+                                    ? KnowledgeStatuses.Available : KnowledgeStatuses.Missing;
                             try
                             {
                                 AtomicJson.Write(Path.Combine(Folder(item), "knowledge-result.json"), new
                                 { knowledge.Success, knowledge.Source, knowledge.Confidence, knowledge.MissingFields,
                                     ReturnedFields = knowledge.ReturnedFields?.Keys.ToArray(),
                                     knowledge.MissingProduct, knowledge.ProductVersion, knowledge.SellerId,
-                                    knowledge.KnowledgeCategory,
+                                    knowledge.KnowledgeCategory, request.BindingStatus,
                                     Status = knowledgeStatus });
                             }
                             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -241,7 +248,7 @@ public sealed class DurableShadowDispatch : IDisposable
                         result = result with { Status = "EmptyReply", Reason = "AI result was empty; no preview created." };
                     var aiResponseId = result.Status == "Converted" ? Guid.NewGuid().ToString("N") : null;
                     _agentTrace.Response(item, context, result, aiResponseId);
-                    if (_enrichAiContext && knowledgeStatus == KnowledgeStatuses.Missing &&
+                    if (_enrichAiContext && (knowledgeStatus is KnowledgeStatuses.Missing or KnowledgeStatuses.MissingProductContext) &&
                         knowledgeRequest?.NeedFields.Count > 0 && result.Status == "Converted")
                     {
                         result = result with { ReplySuggestion = "当前缺少已确认的商品信息，请人工核实后答复。" };

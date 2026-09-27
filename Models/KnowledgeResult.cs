@@ -14,4 +14,5 @@ public static class KnowledgeStatuses
     public const string Available = "Available";
     public const string Missing = "Missing";
     public const string NotRequired = "NotRequired";
+    public const string MissingProductContext = "MissingProductContext";
 }

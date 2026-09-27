@@ -83,6 +83,48 @@ public sealed class SessionRegistry(string stateRoot, string runId, string? mapp
         AtomicJson.Write(sessionFile, result);
         return result;
     }
+    public MessageSession BindCurrentProduct(MessageSession session, ProductContextResolution resolution,
+        DateTimeOffset capturedAt, string captureId)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        ArgumentNullException.ThrowIfNull(resolution);
+        if (resolution.Status == ProductContextBindingStatus.Bound && resolution.Current is null ||
+            resolution.Status != ProductContextBindingStatus.Bound && resolution.Current is not null)
+            throw new InvalidDataException("Product context status and current binding disagree.");
+        var current = resolution.Current;
+        if (current is not null && (current.SessionId != session.SessionId ||
+            current.SellerId != session.SellerId || !ProductIdExtractor.IsValidProductId(current.ProductId) ||
+            current.Source == ProductContextSource.OCR &&
+                (current.CaptureId != captureId || current.CapturedAt != capturedAt)))
+            throw new InvalidDataException("Product context differs from this session or capture.");
+        var references = (session.ProductReferences ?? Array.Empty<ProductReference>()).ToList();
+        if (current?.Source == ProductContextSource.Manual)
+        {
+            references.RemoveAll(reference => reference.ProductId == current.ProductId);
+            references.Add(new ProductReference(current.ProductId, "ManualProductBinding", capturedAt,
+                captureId, "CurrentOperatorBoundSession"));
+        }
+        var bound = session with
+        {
+            CurrentProductContext = current,
+            ProductContextBindingStatus = resolution.Status,
+            ProductReferences = references.OrderBy(reference => reference.CapturedAt).TakeLast(128).ToArray()
+        };
+        AtomicJson.Write(Path.Combine(stateRoot, "sessions", session.SessionId, "session.json"), bound);
+        if (current is not null)
+            RunLogWriter.Append(stateRoot, "product-context-audit.jsonl", new
+            {
+                Event = "PRODUCT_CONTEXT_BOUND", session.SessionId, current.ProductId,
+                current.Source, current.Confidence, Timestamp = capturedAt, current.BoundBy, CaptureId = captureId
+            });
+        else if (resolution.Status == ProductContextBindingStatus.Conflict)
+            RunLogWriter.Append(stateRoot, "product-context-audit.jsonl", new
+            {
+                Event = "PRODUCT_CONTEXT_CONFLICT", session.SessionId, Timestamp = capturedAt,
+                Reason = resolution.Reason, CaptureId = captureId
+            });
+        return bound;
+    }
     public NewMessageTracker Tracker(MessageSession session, DateTime now)
     {
         if (!_trackers.TryGetValue(session.SessionId, out var tracker))

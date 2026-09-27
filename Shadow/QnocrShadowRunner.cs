@@ -99,6 +99,8 @@ public sealed class QnocrShadowRunner
         var native = new NativeWorkerClient();
         var windowCapture = new QianniuWindowCapture();
         var profiles = new ProductContextResolver(Path.Combine(AppContext.BaseDirectory, "Product", "product-profiles.sample.json"));
+        var productBindingResolver = new SessionProductContextResolver(
+            new ManualProductResolver(stateRoot), new OcrProductResolver());
         var detector = new ChatRegionChangeDetector(); var extractor = new QianniuRegionExtractor(); var structurer = new BuyerMessageStructurer();
         using var dispatch = new DurableShadowDispatch(stateRoot, Path.Combine(run, "lifecycle.jsonl"), token,
             _adapt ?? (options.AiShadow
@@ -115,14 +117,14 @@ public sealed class QnocrShadowRunner
         var runIds = new HashSet<string>(StringComparer.Ordinal); var sessionIds = new HashSet<string>(StringComparer.Ordinal);
         var outOfScopeMessages = 0;
         var status = "Completed";
-        AtomicJson.Write(Path.Combine(run, "session.json"), new { Version = "1.28", StartedAt = startedAt, StateDirectory = stateRoot,
+        AtomicJson.Write(Path.Combine(run, "session.json"), new { Version = "1.29", StartedAt = startedAt, StateDirectory = stateRoot,
             options.MaximumFrames, options.MaximumMinutes, options.MaxRunMegabytes, options.MaxStateMegabytes, AiEnabled = options.AiShadow, SendEnabled = false,
             AllowedAiSession = allowedAiSession, ProviderConfig = options.AiProviderConfigPath ?? "Config/ai-provider.json",
             Identity = "Per-buyer OCR label sessions; test identities are isolated, no platform identity inference",
             ProductKnowledgeEnabled = options.ProductKnowledgePath is not null,
             IntentProvider = intentSelection.SelectedProvider, IntentFallbackUsed = intentSelection.FallbackUsed,
             IntentProviderConfig = options.IntentProviderConfigPath });
-        Console.WriteLine($"[SHADOW V1.28] Session: {run}\nState: {stateRoot}\nAI={(options.AiShadow ? "ON" : "OFF")}; Send=OFF; first buyer snapshot is baseline. stop.request stops cleanly.");
+        Console.WriteLine($"[SHADOW V1.29] Session: {run}\nState: {stateRoot}\nAI={(options.AiShadow ? "ON" : "OFF")}; Send=OFF; first buyer snapshot is baseline. stop.request stops cleanly.");
         Console.WriteLine($"[Shadow Flags] AI_ENABLED={options.AiShadow.ToString().ToLowerInvariant()} SEND_ENABLED=false");
         try
         {
@@ -175,12 +177,13 @@ public sealed class QnocrShadowRunner
                         foreach (var (file, _) in pixels.GetRegions()) File.Copy(Path.Combine(slot, file), Path.Combine(eventDirectory, file));
                         AtomicJson.Write(Path.Combine(eventDirectory, "layout.json"), layout);
                         var productId = "";
+                        OcrResult? productOcr = null;
                         try
                         {
                             productCalls++;
-                            var ocr = await Recognize(Path.Combine(eventDirectory, "product_region.png"));
-                            AtomicJson.Write(Path.Combine(eventDirectory, "product-ocr.json"), ocr);
-                            var product = profiles.Resolve(ocr); productId = product.ProductId ?? "";
+                            productOcr = await Recognize(Path.Combine(eventDirectory, "product_region.png"));
+                            AtomicJson.Write(Path.Combine(eventDirectory, "product-ocr.json"), productOcr);
+                            var product = profiles.Resolve(productOcr); productId = product.ProductId ?? "";
                             AtomicJson.Write(Path.Combine(eventDirectory, "product-context.json"), product);
                         }
                         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -197,7 +200,12 @@ public sealed class QnocrShadowRunner
                         if (observedBuyer is not null)
                         {
                             var frameCaptureId = $"{Path.GetFileName(run)}:frame_{attempts:D6}";
-                            buyerSession = registry.Resolve(observedBuyer, productId, captureTime, frameCaptureId); sessionIds.Add(buyerSession.SessionId);
+                            buyerSession = registry.Resolve(observedBuyer, productId, captureTime, frameCaptureId);
+                            var productResolution = productBindingResolver.Resolve(buyerSession, productOcr, captureTime, frameCaptureId);
+                            buyerSession = registry.BindCurrentProduct(buyerSession, productResolution, captureTime, frameCaptureId);
+                            if (buyerSession.CurrentProductContext is not null)
+                                agentTrace.ProductContextBound(buyerSession, frameCaptureId, captureTime);
+                            sessionIds.Add(buyerSession.SessionId);
                             lifecycle.Observe(buyerSession, captureTime);
                             tracker = registry.Tracker(buyerSession, _displayNow()); comparison = tracker.Compare(batch.Messages, _displayNow());
                             AtomicJson.Write(Path.Combine(eventDirectory, "message-comparison.json"), comparison);

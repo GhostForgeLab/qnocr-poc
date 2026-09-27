@@ -292,7 +292,7 @@ namespace CompatibilityHost
             if (context == null || string.IsNullOrWhiteSpace(context.SessionId) || context.Messages == null || context.Messages.Count < 1
                 || context.ModelInputMessageCount < 1 || context.ModelInputMessageCount > 10 || context.Messages.Count < context.ModelInputMessageCount
                 || envelope.Messages == null || envelope.Messages.Count != 1
-                || context.BuyerId != envelope.BuyerId || context.ProductId != envelope.ProductId
+                || context.BuyerId != envelope.BuyerId || !ContextProductMatches(context, envelope)
                 || context.Messages.Last().Role != envelope.Messages[0].Role
                 || context.Messages.Last().Text != envelope.Messages[0].Text
                 || context.Messages.Last().Timestamp != envelope.Messages[0].Timestamp)
@@ -303,6 +303,27 @@ namespace CompatibilityHost
             return envelope;
         }
 
+        private static bool ContextProductMatches(AgentContextWire context, MessageEnvelope envelope)
+        {
+            if (context.ProductContextBindingStatus == null)
+                return context.ProductId == envelope.ProductId; // pre-V1.29 context
+            var binding = context.CurrentProductContext;
+            if (context.ProductContextBindingStatus == "Bound")
+            {
+                if (binding == null || binding.SessionId != context.SessionId ||
+                    binding.SellerId != envelope.SellerId || binding.ProductId != context.ProductId ||
+                    string.IsNullOrWhiteSpace(binding.BoundBy) || binding.ProductId.Length < 10 ||
+                    binding.ProductId.Length > 16 || !binding.ProductId.All(char.IsDigit)) return false;
+                if (binding.Source == "OCR")
+                    return binding.CaptureId == context.CaptureId &&
+                        binding.ProductId == envelope.ProductId && binding.Confidence >= 0.80;
+                if (binding.Source == "Manual")
+                    return string.IsNullOrEmpty(envelope.ProductId) || binding.ProductId == envelope.ProductId;
+                return false; // UI source is reserved, not implemented.
+            }
+            return binding == null && context.ProductId == envelope.ProductId &&
+                new[] { "Unknown", "Uncertain", "Conflict" }.Contains(context.ProductContextBindingStatus);
+        }
         private static string BuildModelQuestion(string currentQuestion, AgentContextWire context)
         {
             string baseQuestion;
@@ -338,7 +359,9 @@ namespace CompatibilityHost
             var allowed = new HashSet<string>(StringComparer.Ordinal)
             { "Capacity", "Size", "Weight", "Material", "CustomizationPolicy", "Waterproof", "ShippingTime",
                 "ReturnPolicy", "CurrentPrice", "Specification", "Unspecified" };
-            if (knowledge.ProductId != envelope.ProductId || knowledge.SellerId != envelope.SellerId ||
+            if ((knowledge.Status == "MissingProductContext"
+                    ? knowledge.ProductId != "" || !knowledge.MissingProduct
+                    : knowledge.ProductId != context.ProductId) || knowledge.SellerId != envelope.SellerId ||
                 knowledge.FactFields == null || knowledge.MissingFields == null ||
                 knowledge.FactFields.Keys.Any(key => !allowed.Contains(key)) ||
                 knowledge.MissingFields.Any(field => !allowed.Contains(field)))
@@ -356,7 +379,7 @@ namespace CompatibilityHost
                         value.Any(ch => char.IsControl(ch) || ch == '<' || ch == '>' || ch == '{' || ch == '}')))
                     throw new InvalidDataException("Only bounded single-product test facts may enter model question.");
             }
-            else if (knowledge.Status == "Missing")
+            else if (knowledge.Status == "Missing" || knowledge.Status == "MissingProductContext")
             {
                 if (knowledge.Source != "None" || knowledge.FactFields.Count != 0 || knowledge.MissingFields.Count == 0)
                     throw new InvalidDataException("Missing knowledge cannot carry product facts.");

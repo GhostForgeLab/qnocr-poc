@@ -3,7 +3,9 @@ namespace QnocrPoc.Models;
 public sealed record MessageSession(string SessionId, string SellerId, string BuyerId, string ObservedBuyer,
     string IdentityBinding, string ProductId, string? IdentityPath,
     string? BuyerDisplayName = null, DateTimeOffset CreatedAt = default, DateTimeOffset LastActivityAt = default,
-    IReadOnlyList<ProductReference>? ProductReferences = null, BuyerIdentity? Identity = null);
+    IReadOnlyList<ProductReference>? ProductReferences = null, BuyerIdentity? Identity = null,
+    BoundProductContext? CurrentProductContext = null,
+    ProductContextBindingStatus? ProductContextBindingStatus = null);
 public sealed record MessageLifecycle(DateTimeOffset CaptureTime, string Source, string Buyer, string ProductId,
     string SessionId, string MessageId, string Fingerprint, string Stage, string AdapterResult, string DispatchResult,
     string AiState, int Attempt, string? Detail = null);
@@ -14,7 +16,9 @@ public sealed record SessionContextView(string SessionId, string BuyerId, string
     string AiRequestId, int ModelInputMessageCount, string? BuyerDisplayName = null,
     DateTimeOffset CreatedAt = default, DateTimeOffset LastActivityAt = default,
     IReadOnlyList<ProductReference>? ProductReferences = null,
-    IReadOnlyList<MessageProductLink>? MessageProductLinks = null, BuyerIdentity? Identity = null);
+    IReadOnlyList<MessageProductLink>? MessageProductLinks = null, BuyerIdentity? Identity = null,
+    BoundProductContext? CurrentProductContext = null,
+    ProductContextBindingStatus? ProductContextBindingStatus = null);
 
 /// <summary>Model confidence is unavailable until a calibrated score exists; never invent a probability.</summary>
 public sealed record ReplyPreview(string SessionId, string BuyerId, SessionContextView Input, string Reply,

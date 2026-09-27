@@ -70,6 +70,24 @@ public sealed class AgentPipelineTrace(string runDirectory)
         Write(new(DateTimeOffset.Now, "DECISION_ERROR", item.CaptureId ?? "", item.Session.SessionId,
             item.Session.BuyerId, item.MessageId, context?.AiRequestId ?? item.AiRequestId, null,
             item.Envelope.ProductId, context?.Messages.Count ?? 1, null, null, detail));
+    public bool ProductContextBound(MessageSession session, string captureId, DateTimeOffset capturedAt)
+    {
+        var bound = session.CurrentProductContext;
+        if (bound is null || session.ProductContextBindingStatus != ProductContextBindingStatus.Bound)
+            return false;
+        return Write(new(capturedAt, "PRODUCT_CONTEXT_BOUND", captureId, session.SessionId,
+            session.BuyerId, null, null, null, bound.ProductId, 0, null, null,
+            "BoundBy=" + bound.BoundBy, Source: bound.Source.ToString(),
+            Confidence: bound.Confidence, SellerId: bound.SellerId));
+    }
+    public bool ProductContextMissing(DispatchItem item, SessionContextView context,
+        KnowledgeRequest request) =>
+        Write(new(DateTimeOffset.Now, "PRODUCT_CONTEXT_MISSING", item.CaptureId ?? "",
+            item.Session.SessionId, item.Session.BuyerId, item.MessageId, context.AiRequestId,
+            null, "", context.Messages.Count, null, null,
+            "BindingStatus=" + request.BindingStatus + "; provider lookup skipped",
+            Intent: request.Intent, SellerId: request.SellerId,
+            MissingFields: request.NeedFields));
     public bool KnowledgeRequested(DispatchItem item, SessionContextView context,
         KnowledgeRequest request) =>
         Write(new(DateTimeOffset.Now, "KNOWLEDGE_REQUEST", item.CaptureId ?? "", item.Session.SessionId,
