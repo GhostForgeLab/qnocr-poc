@@ -20,6 +20,7 @@ public sealed class AssistantRuntimeDashboard(string stateRoot, string runDirect
         var audit = ReadAudit().Where(e => ids.Contains(e.ReplyPreviewId)).ToArray();
         var observations = ObserveSessions(previews, feedback);
         var counts = feedback.Select(r => r.Feedback.FeedbackType).ToArray();
+        var classifications = feedback.Select(r => r.Classification).Where(c => c is not null).ToArray();
         var accepted = counts.Count(t => t == ReplyFeedbackTypes.Accepted);
         var edited = counts.Count(t => t == ReplyFeedbackTypes.Edited);
         var rejected = counts.Count(t => t == ReplyFeedbackTypes.Rejected);
@@ -46,7 +47,14 @@ public sealed class AssistantRuntimeDashboard(string stateRoot, string runDirect
             feedback.Count(f => f.Feedback.ContextAssessment == "Continued"),
             feedback.Count(f => f.Feedback.ContextAssessment == "Lost"),
             feedback.Count(f => f.Feedback.ContextAssessment == "Unknown"),
-            editDelays.Length == 0 ? null : editDelays.Average());
+            editDelays.Length == 0 ? null : editDelays.Average(),
+            classifications.Length,
+            classifications.Count(c => c!.FeedbackType == FeedbackClassificationTypes.KnowledgeGap),
+            classifications.Count(c => c!.FeedbackType == FeedbackClassificationTypes.StyleIssue),
+            classifications.Count(c => c!.FeedbackType == FeedbackClassificationTypes.RuleIssue),
+            classifications.Count(c => c!.FeedbackType == FeedbackClassificationTypes.IntentIssue),
+            classifications.Count(c => c!.FeedbackType == FeedbackClassificationTypes.Other),
+            feedback.Count - classifications.Length);
     }
 
     public IReadOnlyList<ConversationSample> Samples()
@@ -68,6 +76,14 @@ public sealed class AssistantRuntimeDashboard(string stateRoot, string runDirect
         ReadRunMetadata();
         var (_, _, feedback, _) = ReadState();
         return feedback.OrderBy(f => f.Feedback.RecordedAt).ToArray();
+    }
+
+    public IReadOnlyList<FeedbackClassification> Classifications()
+    {
+        ReadRunMetadata();
+        var (_, _, feedback, _) = ReadState();
+        return feedback.Select(r => r.Classification).Where(c => c is not null)
+            .Cast<FeedbackClassification>().OrderBy(c => c.ClassifiedAt).ToArray();
     }
 
     public IReadOnlyList<SessionObservation> Sessions()

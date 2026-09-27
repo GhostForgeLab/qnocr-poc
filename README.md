@@ -1,7 +1,27 @@
-# qnocr-poc V1.17
+# qnocr-poc V1.18
 
 独立的千牛视觉采集实验：窗口捕获 → 布局裁剪 → OCR → BuyerMessage → 统一MessageEnvelope。
 主程序使用 C# / .NET 8 / Windows；V1.0增加独立.NET Framework 4.8离线兼容性宿主，不修改qnbot。
+
+## V1.18 Feedback Learning Router只读反馈分类
+
+`IFeedbackRouter` 接收已脱敏的人工`ReplyFeedback`，输出可审计的`FeedbackClassification`：KnowledgeGap、StyleIssue、RuleIssue、IntentIssue或Other，以及建议调查位置Knowledge、Prompt、Strategy、Decision或None。
+默认`RuleBasedFeedbackRouter`优先使用人工明确选择的原因/分类；只有人工修改或拒绝时，才用有限的200ml/材质新增事实、语气和售后规则差异作保守判断。`Confidence=null`表示规则未经概率校准。分类仅供人工决定优化方向，**不会自动修改知识库、Prompt、策略或Decision，也不训练模型、不发送**。
+
+新反馈与`Classification`一同保存在`assistant-feedback.json`，并写`FEEDBACK_CLASSIFIED`审计（ReplyPreviewId、分类、建议目标、原因代码，不写回复正文）。旧反馈不会悄悄重分类；可显式补齐：
+
+```powershell
+$stateDir = 'Output/State/your-state-dir'
+$runDir = 'Output/Shadow/shadow_本轮目录'
+$previewId = '替换为ReplyPreviewId'
+$batchId = '替换为BatchId'
+dotnet run -- --assist-classify $previewId --state-dir $stateDir
+dotnet run -- --assist-dashboard --state-dir $stateDir --run-dir $runDir
+dotnet run -- --assist-batch-report $batchId --state-dir $stateDir
+```
+
+报告分别统计KnowledgeGap、StyleIssue、RuleIssue、IntentIssue、Other和未分类旧记录。Accepted且未改写的建议归Other/None，不算作纠错证据。
+V1.14已有人审的三条测试消息经显式补分类为KnowledgeGap 1、Other 2；这个结果不验证人工新增的商品事实，也不自动建立知识内容。详见 [VALIDATION_V118.md](VALIDATION_V118.md)。
 
 ## V1.17 单商品 ProductKnowledgeProvider PoC
 
@@ -910,5 +930,5 @@ dotnet run 2>&1 | Tee-Object -FilePath Output/run.log
 截图和原始日志保留在本地 Output，不进入 Git。
 历史实测：V0.1 [VALIDATION.md](VALIDATION.md)，V0.2 [VALIDATION_V02.md](VALIDATION_V02.md)。
 
-V1.17已具备显式启用的单商品本地测试Provider；真实平台Buyer身份仍未验证，工作台不会发送消息。
+V1.18已具备只读人工反馈分类与优化方向统计；真实平台Buyer身份仍未验证，工作台不会发送消息。
 UIA仍仅用于几何定位，不读取消息或商品ID文本；qnbot核心与MessageEnvelope未修改。

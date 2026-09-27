@@ -13,7 +13,7 @@ public sealed record ReplyFeedback(string ReplyPreviewId, string SessionId, stri
     string BuyerQuestion, string ProductId, int ContextMessageCount,
     string ProductReferenceAssessment = "Unknown", string ContextAssessment = "Unknown",
     string QuestionCategory = "未分类", string? Reason = null, string? BatchId = null,
-    string? OperatorNote = null);
+    string? OperatorNote = null, string? DecisionIntent = null);
 
 /// <summary>Minimal consultation evidence, created only after explicit feedback.</summary>
 public sealed record ConversationSample(string ReplyPreviewId, string SessionId, string CaptureId,
@@ -21,9 +21,10 @@ public sealed record ConversationSample(string ReplyPreviewId, string SessionId,
     string ProductId, IReadOnlyList<string> ObservedProductReferences, int ContextMessageCount,
     DateTimeOffset CapturedAt, DateTimeOffset FeedbackAt,
     string QuestionCategory = "未分类", string? Reason = null, string? BatchId = null,
-    string? OperatorNote = null);
+    string? OperatorNote = null, string? DecisionIntent = null);
 
-public sealed record AssistantFeedbackRecord(ReplyFeedback Feedback, ConversationSample Sample);
+public sealed record AssistantFeedbackRecord(ReplyFeedback Feedback, ConversationSample Sample,
+    FeedbackClassification? Classification = null);
 
 public sealed record SessionObservation(string SessionId, int PreviewCount, int DistinctBuyerQuestions,
     int FeedbackCount, int ContextContinuousPairs, int ContextUnprovenPairs,
@@ -41,4 +42,7 @@ public sealed record AssistantRuntimeStats(DateTimeOffset ObservedAt, string Sta
     int UnverifiedProductAssociations, int ProductReferencesMarkedCorrect,
     int ProductReferencesMarkedIncorrect, int ProductReferencesUnreviewed,
     int ContextMarkedContinued, int ContextMarkedLost, int ContextUnreviewed,
-    double? AverageGenerationToEditSeconds);
+    double? AverageGenerationToEditSeconds,
+    int ClassifiedFeedback = 0, int KnowledgeGapCount = 0, int StyleIssueCount = 0,
+    int RuleIssueCount = 0, int IntentIssueCount = 0, int OtherCount = 0,
+    int UnclassifiedLegacyCount = 0);

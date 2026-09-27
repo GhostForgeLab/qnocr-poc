@@ -16,7 +16,7 @@ public static class AssistantCommand
             }), SentMessages = 0 }, new JsonSerializerOptions { WriteIndented = true }));
             return 0;
         }
-        if (args.Length == 5 && args[0] is "--assist-dashboard" or "--assist-stats" or "--assist-sessions" or "--assist-samples"
+        if (args.Length == 5 && args[0] is "--assist-dashboard" or "--assist-stats" or "--assist-sessions" or "--assist-samples" or "--assist-classifications"
             && args[1] == "--state-dir" && args[3] == "--run-dir")
         {
             var dashboard = new AssistantRuntimeDashboard(args[2], args[4]);
@@ -25,6 +25,7 @@ public static class AssistantCommand
                 "--assist-stats" => dashboard.Snapshot(),
                 "--assist-sessions" => dashboard.Sessions(),
                 "--assist-samples" => dashboard.Samples(),
+                "--assist-classifications" => dashboard.Classifications(),
                 _ => new { Stats = dashboard.Snapshot(), Sessions = dashboard.Sessions(), Samples = dashboard.Samples() }
             };
             Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
@@ -50,6 +51,14 @@ public static class AssistantCommand
                 options.GetValueOrDefault("--context-assessment", "Unknown"), operatorNote: note);
             Console.WriteLine(JsonSerializer.Serialize(new { Feedback = feedback, SentMessages = 0,
                 Note = "Human assessment only; no model training or send action." }, new JsonSerializerOptions { WriteIndented = true }));
+            return 0;
+        }
+        if (args[0] == "--assist-classify" && options.Count == 1)
+        {
+            var classification = service.ClassifyExisting(args[1]);
+            Console.WriteLine(JsonSerializer.Serialize(new { Classification = classification, SentMessages = 0,
+                Note = "Rule-based routing only; no knowledge, Prompt, model, or send mutation." },
+                new JsonSerializerOptions { WriteIndented = true }));
             return 0;
         }
         var id = args[1];
@@ -83,7 +92,7 @@ public static class AssistantCommand
     }
 
     private static void Usage() => Console.Error.WriteLine(
-        "Usage: --assist-dashboard|--assist-stats|--assist-sessions|--assist-samples --state-dir DIR --run-dir RUN | --assist-feedback ID --state-dir DIR --operator NAME --type Accepted|Edited|Rejected [--final-text-file FILE] [--note-file FILE] [--product-assessment Unknown|Correct|Incorrect] [--context-assessment Unknown|Continued|Lost] | --assist-list --state-dir DIR | --assist-show ID --state-dir DIR | --assist-edit ID --state-dir DIR --operator NAME --text-file FILE | " +
+        "Usage: --assist-dashboard|--assist-stats|--assist-sessions|--assist-samples|--assist-classifications --state-dir DIR --run-dir RUN | --assist-feedback ID --state-dir DIR --operator NAME --type Accepted|Edited|Rejected [--final-text-file FILE] [--note-file FILE] [--product-assessment Unknown|Correct|Incorrect] [--context-assessment Unknown|Continued|Lost] | --assist-classify ID --state-dir DIR | --assist-list --state-dir DIR | --assist-show ID --state-dir DIR | --assist-edit ID --state-dir DIR --operator NAME --text-file FILE | " +
         "--assist-approve ID --state-dir DIR --operator NAME --reply-sha256 SHA256 | " +
         "--assist-copy ID --state-dir DIR --operator NAME --reply-sha256 SHA256 | --assist-outcome ID --state-dir DIR --operator NAME --result PastedAndSentReported|NotSentReported. No send operation.");
 }

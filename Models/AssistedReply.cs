@@ -32,4 +32,5 @@ public sealed record AssistedReplyView(string ReplyPreviewId, string SessionId, 
 
 public sealed record AssistantAuditEvent(DateTimeOffset Timestamp, string Event, string ReplyPreviewId,
     string CaptureId, string SessionId, string AiRequestId, string AiResponseId,
-    string? OperatorId, string ReplySha256, string Detail);
+    string? OperatorId, string ReplySha256, string Detail,
+    string? FeedbackType = null, string? SuggestedTarget = null, string? Reason = null);

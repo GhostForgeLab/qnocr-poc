@@ -13,4 +13,7 @@ public sealed record TrialBatchReport(EvaluationBatch Batch, DateTimeOffset Obse
     IReadOnlyDictionary<string, int> QuestionCategories, IReadOnlyDictionary<string, int> FeedbackReasons,
     IReadOnlyList<TaggedTrialQuestion> RejectedQuestions,
     IReadOnlyList<TaggedTrialQuestion> MissingProductInformationQuestions,
-    int AiCalls, int? SentMessages, string SendSafetySource, int ReadErrors);
+    int AiCalls, int? SentMessages, string SendSafetySource, int ReadErrors,
+    int ClassifiedFeedback = 0, int KnowledgeGapCount = 0, int StyleIssueCount = 0,
+    int RuleIssueCount = 0, int IntentIssueCount = 0, int OtherCount = 0,
+    int UnclassifiedLegacyCount = 0);

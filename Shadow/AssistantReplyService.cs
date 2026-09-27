@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using QnocrPoc.Models;
+using QnocrPoc.Feedback;
 
 namespace QnocrPoc.Shadow;
 
@@ -29,9 +30,10 @@ public sealed class WindowsAssistantClipboard : IAssistantClipboard
 }
 
 /// <summary>Durable, local human-review sidecar. It never invokes a send path.</summary>
-public sealed class AssistantReplyService(string stateRoot)
+public sealed class AssistantReplyService(string stateRoot, IFeedbackRouter? feedbackRouter = null)
 {
     private readonly string _root = Path.GetFullPath(stateRoot);
+    private readonly IFeedbackRouter _feedbackRouter = feedbackRouter ?? new RuleBasedFeedbackRouter();
     private static readonly JsonSerializerOptions Json = new() { PropertyNameCaseInsensitive = true };
     private string AuditPath => Path.Combine(_root, "assistant-actions.jsonl");
     public static string Hash(string text) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text)));
@@ -195,17 +197,61 @@ public sealed class AssistantReplyService(string stateRoot)
         var safeNote = operatorNote is null ? null : AssistantSampleRedactor.Redact(operatorNote);
         var feedback = new ReplyFeedback(preview.ReplyPreviewId, preview.SessionId, safeAi, safeFinal,
             feedbackType, now, operatorId, safeQuestion, preview.Input.ProductId, preview.Input.Messages.Count,
-            productAssessment, contextAssessment, questionCategory, reason, batchId, safeNote);
+            productAssessment, contextAssessment, questionCategory, reason, batchId, safeNote,
+            preview.Decision?.IntentName);
         var sample = new ConversationSample(preview.ReplyPreviewId, preview.SessionId, preview.CaptureId,
             safeQuestion, safeAi, safeFinal, feedbackType, preview.Input.ProductId,
             (preview.Input.ProductReferences ?? Array.Empty<ProductReference>()).Select(r => r.ProductId).Distinct(StringComparer.Ordinal).ToArray(),
-            preview.Input.Messages.Count, preview.Input.CapturedAt, now, questionCategory, reason, batchId, safeNote);
-        var record = new AssistantFeedbackRecord(feedback, sample);
+            preview.Input.Messages.Count, preview.Input.CapturedAt, now, questionCategory, reason, batchId, safeNote,
+            preview.Decision?.IntentName);
+        var classification = ClassifySafe(feedback);
+        var record = new AssistantFeedbackRecord(feedback, sample, classification);
         AtomicJson.Write(path, record);
         Append(preview, state, "FEEDBACK_RECORDED", operatorId, feedbackType + "; local redacted sample, no model training or send action.");
+        Append(preview, state, "FEEDBACK_CLASSIFIED", operatorId, classification.Reason, classification);
         return record;
     }
 
+    /// <summary>Adds a rule classification to an existing human record without changing its human-authored fields.</summary>
+    public FeedbackClassification ClassifyExisting(string previewId)
+    {
+        var (folder, preview) = Find(previewId) ?? throw new FileNotFoundException("Reply preview not found.");
+        using var gate = Lock(folder);
+        var path = Path.Combine(folder, "assistant-feedback.json");
+        if (!File.Exists(path)) throw new FileNotFoundException("Human feedback not found.", path);
+        var record = JsonSerializer.Deserialize<AssistantFeedbackRecord>(File.ReadAllText(path), Json)
+            ?? throw new InvalidDataException("Feedback record is unreadable.");
+        if (record.Feedback.ReplyPreviewId != preview.ReplyPreviewId || record.Sample.ReplyPreviewId != preview.ReplyPreviewId)
+            throw new InvalidDataException("Feedback and preview identity differ.");
+        if (record.Classification is not null) return record.Classification;
+        var classified = ClassifySafe(record.Feedback with
+        { DecisionIntent = record.Feedback.DecisionIntent ?? preview.Decision?.IntentName });
+        AtomicJson.Write(path, record with { Classification = classified });
+        var state = Ensure(folder, preview);
+        Append(preview, state, "FEEDBACK_CLASSIFIED", "rule-router", classified.Reason, classified);
+        return classified;
+    }
+
+    private FeedbackClassification ClassifySafe(ReplyFeedback feedback)
+    {
+        FeedbackClassification classified;
+        try { classified = _feedbackRouter.Classify(feedback); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            classified = new FeedbackClassification(feedback.ReplyPreviewId, FeedbackClassificationTypes.Other,
+                null, "RouterError_" + ex.GetType().Name, FeedbackTargets.None, DateTimeOffset.Now);
+        }
+        if (classified.ReplyPreviewId != feedback.ReplyPreviewId ||
+            classified.FeedbackType is not (FeedbackClassificationTypes.KnowledgeGap or FeedbackClassificationTypes.StyleIssue
+                or FeedbackClassificationTypes.RuleIssue or FeedbackClassificationTypes.IntentIssue or FeedbackClassificationTypes.Other) ||
+            classified.SuggestedTarget is not (FeedbackTargets.Knowledge or FeedbackTargets.Prompt or FeedbackTargets.Strategy
+                or FeedbackTargets.Decision or FeedbackTargets.None) || string.IsNullOrWhiteSpace(classified.Reason) ||
+            classified.Reason.Length > 128 || classified.Confidence is { } confidence &&
+                (!double.IsFinite(confidence) || confidence is < 0 or > 1))
+            return new FeedbackClassification(feedback.ReplyPreviewId, FeedbackClassificationTypes.Other,
+                null, "InvalidRouterOutput", FeedbackTargets.None, DateTimeOffset.Now);
+        return classified;
+    }
     private static void HoldRejectedFeedback(string folder)
     {
         var path = Path.Combine(folder, "assistant-feedback.json");
@@ -274,12 +320,14 @@ public sealed class AssistantReplyService(string stateRoot)
         Directory.CreateDirectory(folder);
         return new FileStream(Path.Combine(folder, "assistant.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
     }
-    private void Append(ReplyPreview preview, AssistedReplyState state, string kind, string? operatorId, string detail)
+    private void Append(ReplyPreview preview, AssistedReplyState state, string kind, string? operatorId, string detail,
+        FeedbackClassification? classification = null)
     {
         Directory.CreateDirectory(_root);
         var item = new AssistantAuditEvent(DateTimeOffset.Now, kind, preview.ReplyPreviewId,
             preview.CaptureId, preview.SessionId, preview.AiRequestId, preview.AiResponseId,
-            operatorId, state.ReplySha256, detail);
+            operatorId, state.ReplySha256, detail, classification?.FeedbackType,
+            classification?.SuggestedTarget, classification?.Reason);
         RunLogWriter.Append(_root, Path.GetFileName(AuditPath), item);
     }
     private (string Folder, ReplyPreview Preview)? Find(string previewId)

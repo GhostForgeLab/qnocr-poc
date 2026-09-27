@@ -97,6 +97,7 @@ public sealed class EvaluationBatchService(string stateRoot)
         var dashboard = new AssistantRuntimeDashboard(_root, batch.RunDirectory);
         var stats = dashboard.Snapshot();
         var records = dashboard.FeedbackRecords();
+        var classifications = records.Select(r => r.Classification).Where(c => c is not null).ToArray();
         var accepted = records.Count(r => r.Feedback.FeedbackType == ReplyFeedbackTypes.Accepted);
         var edited = records.Count(r => r.Feedback.FeedbackType == ReplyFeedbackTypes.Edited);
         var rejected = records.Count(r => r.Feedback.FeedbackType == ReplyFeedbackTypes.Rejected);
@@ -115,7 +116,14 @@ public sealed class EvaluationBatchService(string stateRoot)
             categories, reasons,
             records.Where(r => r.Feedback.FeedbackType == ReplyFeedbackTypes.Rejected).Select(Tagged).ToArray(),
             records.Where(r => r.Feedback.Reason == "缺少商品信息").Select(Tagged).ToArray(),
-            stats.AiCalls, stats.SentMessages, stats.SendSafetySource, stats.ReadErrors);
+            stats.AiCalls, stats.SentMessages, stats.SendSafetySource, stats.ReadErrors,
+            classifications.Length,
+            classifications.Count(c => c!.FeedbackType == FeedbackClassificationTypes.KnowledgeGap),
+            classifications.Count(c => c!.FeedbackType == FeedbackClassificationTypes.StyleIssue),
+            classifications.Count(c => c!.FeedbackType == FeedbackClassificationTypes.RuleIssue),
+            classifications.Count(c => c!.FeedbackType == FeedbackClassificationTypes.IntentIssue),
+            classifications.Count(c => c!.FeedbackType == FeedbackClassificationTypes.Other),
+            records.Count - classifications.Length);
     }
 
     private static double? Rate(int numerator, int denominator) => denominator == 0 ? null : (double)numerator / denominator;

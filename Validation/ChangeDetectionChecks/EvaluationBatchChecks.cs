@@ -101,6 +101,14 @@ internal static class EvaluationBatchChecks
         check(report.RejectedQuestions.Count == 1 && report.MissingProductInformationQuestions.Count == 1 &&
             report.RejectedQuestions[0].BuyerQuestion == "刻字后能退吗？",
             "rejected questions and manual missing-product tags remain reviewable as redacted samples");
+        check(report.ClassifiedFeedback == 3 && report.KnowledgeGapCount == 1 &&
+            report.StyleIssueCount == 1 && report.RuleIssueCount == 0 &&
+            report.IntentIssueCount == 0 && report.OtherCount == 1 && report.UnclassifiedLegacyCount == 0,
+            "batch report counts routed feedback types without treating accepted replies as correction evidence");
+        var dashboardStats = new AssistantRuntimeDashboard(state, run).Snapshot();
+        check(dashboardStats.KnowledgeGapCount == 1 && dashboardStats.StyleIssueCount == 1 &&
+            dashboardStats.OtherCount == 1 && dashboardStats.ClassifiedFeedback == 3,
+            "per-run dashboard exposes the same classification counts as the batch report");
         check(report.AiCalls == 3 && report.SentMessages == 0 && clipboard.Calls == 2 &&
             !Directory.EnumerateFiles(state, "send-request.json", SearchOption.AllDirectories).Any(),
             "batch operations do not call a send adapter or create send requests");
