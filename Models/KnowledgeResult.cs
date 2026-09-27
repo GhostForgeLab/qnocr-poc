@@ -5,7 +5,8 @@ public sealed record KnowledgeResult(bool Success, string Source, double? Confid
     string Content, IReadOnlyList<string> MissingFields,
     IReadOnlyDictionary<string, string>? ReturnedFields = null, DateTimeOffset? UpdatedAt = null,
     bool MissingProduct = false, string? ProductVersion = null, string? SellerId = null,
-    string? KnowledgeCategory = null);
+    string? KnowledgeCategory = null, KnowledgeSource? ItemSource = null,
+    string? KnowledgeId = null);
 
 public static class KnowledgeStatuses
 {

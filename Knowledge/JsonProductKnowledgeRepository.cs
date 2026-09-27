@@ -10,10 +10,12 @@ public sealed class JsonProductKnowledgeRepository : IProductKnowledgeRepository
     private static readonly HashSet<string> AllowedFields = new(StringComparer.Ordinal)
     { "Capacity", "Material", "CustomizationPolicy" };
     private readonly Dictionary<(string SellerId, string ProductId), ProductKnowledgeRecord> _records = new();
+    private readonly string? _workflowItemsPath;
     private sealed record ProductFile(List<ProductKnowledgeRecord> Products);
 
-    public JsonProductKnowledgeRepository(string path)
+    public JsonProductKnowledgeRepository(string path, string? workflowItemsPath = null)
     {
+        _workflowItemsPath = workflowItemsPath is null ? null : Path.GetFullPath(workflowItemsPath);
         var fullPath = Path.GetFullPath(path);
         if (new FileInfo(fullPath).Length > 64 * 1024)
             throw new InvalidDataException("Test product source exceeds 64 KiB.");
@@ -53,11 +55,38 @@ public sealed class JsonProductKnowledgeRepository : IProductKnowledgeRepository
         cancellationToken.ThrowIfCancellationRequested();
         if (!_records.TryGetValue((sellerId, productId), out var record))
             return Task.FromResult<ProductKnowledgeRecord?>(null);
+        IReadOnlyList<KnowledgeItem>? published = _workflowItemsPath is null ? null : [];
+        if (_workflowItemsPath is not null)
+        {
+            if (!File.Exists(_workflowItemsPath))
+                throw new InvalidDataException("Knowledge workflow state is missing; legacy facts are not a fallback.");
+            if (new FileInfo(_workflowItemsPath).Length > 256 * 1024)
+                throw new InvalidDataException("Workflow state exceeds 256 KiB.");
+            var items = JsonSerializer.Deserialize<List<KnowledgeItem>>(File.ReadAllText(_workflowItemsPath))
+                ?? throw new InvalidDataException("Workflow state is null.");
+            if (items.Count > 256 || items.Select(item => item.KnowledgeId).Distinct(StringComparer.Ordinal).Count() != items.Count ||
+                items.Any(item => item.Version is null || item.Source is null ||
+                item.Version.Status != item.Status || string.IsNullOrWhiteSpace(item.KnowledgeId) ||
+                string.IsNullOrWhiteSpace(item.Version.Version) || string.IsNullOrWhiteSpace(item.Key) ||
+                string.IsNullOrWhiteSpace(item.Category) || string.IsNullOrWhiteSpace(item.Value) ||
+                item.Value.Length > 200 || item.Value.Any(ch => char.IsControl(ch) || ch is '<' or '>' or '{' or '}') ||
+                item.Source.CapturedAt == default || string.IsNullOrWhiteSpace(item.Source.Reference) ||
+                !Enum.IsDefined(item.Source.SourceType) || !item.IsTestData))
+                throw new InvalidDataException("Invalid bounded workflow state.");
+            var matching = items.Where(item => item.SellerId == sellerId && item.ProductId == productId).ToArray();
+            // Explicit workflow mode never falls back to unreviewed legacy facts, even for an empty product.
+            published = matching.Where(item => item.Status == KnowledgeStatus.Published &&
+                item.AiUseAllowed && !string.IsNullOrWhiteSpace(item.Version.ApprovedBy) &&
+                !string.IsNullOrWhiteSpace(item.ReviewedBy) && item.ReviewedAt is not null).ToArray();
+            if (published.GroupBy(item => item.Key, StringComparer.Ordinal).Any(group => group.Count() > 1))
+                throw new InvalidDataException("More than one published item defines a field.");
+        }
         return Task.FromResult<ProductKnowledgeRecord?>(record with
         {
             Fields = new Dictionary<string, string>(record.Fields, StringComparer.Ordinal),
             Profile = record.Profile is null ? null :
-                JsonSerializer.Deserialize<ProductKnowledgeProfile>(JsonSerializer.Serialize(record.Profile))
+                JsonSerializer.Deserialize<ProductKnowledgeProfile>(JsonSerializer.Serialize(record.Profile)),
+            KnowledgeItems = published
         });
     }
 }

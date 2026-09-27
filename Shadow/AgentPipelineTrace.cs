@@ -81,7 +81,9 @@ public sealed class AgentPipelineTrace(string runDirectory)
             NeedFields: request.NeedFields, MissingFields: result.MissingFields,
             ReturnedFields: result.ReturnedFields?.Keys.ToArray(), SellerId: request.SellerId,
             ProductVersion: result.ProductVersion, MissingProduct: result.MissingProduct,
-            KnowledgeCategory: result.KnowledgeCategory));
+            KnowledgeCategory: result.KnowledgeCategory, KnowledgeId: result.KnowledgeId,
+            KnowledgeSourceType: result.ItemSource?.SourceType.ToString(),
+            KnowledgeReference: result.ItemSource?.Reference));
     public bool KnowledgeError(DispatchItem item, SessionContextView context,
         KnowledgeRequest request, string errorType) =>
         Write(new(DateTimeOffset.Now, "KNOWLEDGE_ERROR", item.CaptureId ?? "", item.Session.SessionId,
@@ -100,7 +102,9 @@ public sealed class AgentPipelineTrace(string runDirectory)
             NeedFields: request.NeedFields, MissingFields: result.MissingFields,
             ReturnedFields: result.ReturnedFields?.Keys.ToArray(), SellerId: request.SellerId,
             ProductVersion: result.ProductVersion, MissingProduct: result.MissingProduct,
-            KnowledgeCategory: result.KnowledgeCategory));
+            KnowledgeCategory: result.KnowledgeCategory, KnowledgeId: result.KnowledgeId,
+            KnowledgeSourceType: result.ItemSource?.SourceType.ToString(),
+            KnowledgeReference: result.ItemSource?.Reference));
     public bool KnowledgeGuardApplied(DispatchItem item, SessionContextView context,
         KnowledgeRequest request) =>
         Write(new(DateTimeOffset.Now, "KNOWLEDGE_GUARD_APPLIED", item.CaptureId ?? "", item.Session.SessionId,

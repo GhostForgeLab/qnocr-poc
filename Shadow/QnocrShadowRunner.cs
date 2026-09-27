@@ -14,7 +14,7 @@ namespace QnocrPoc.Shadow;
 public sealed record ShadowRunOptions(int? MaximumFrames = null, int IntervalMilliseconds = 1000, string? IdentityMappingPath = null,
     bool AiShadow = false, double? MaximumMinutes = null, string? StateDirectory = null, string? AiSessionId = null,
     string? AiProviderConfigPath = null, double MaxRunMegabytes = 1024, double MaxStateMegabytes = 4096,
-    string? ProductKnowledgePath = null);
+    string? ProductKnowledgePath = null, string? KnowledgeWorkflowItemsPath = null);
 public sealed record ShadowRunSummary(string Status, int Attempts, int SuccessfulFrames, int FailedFrames,
     int ProductOcrCalls, int ChatOcrCalls, int Envelopes, int ConvertedEnvelopes, int DeferredEnvelopes, string SessionDirectory,
     int NewMessages, int BaselineMessages, int DuplicateObservations, int HistoricalObservations, int ConvertedMessages,
@@ -56,6 +56,9 @@ public sealed class QnocrShadowRunner
             throw new InvalidDataException("Local test product knowledge requires explicit AI Shadow mode.");
         if (options.ProductKnowledgePath is not null && _knowledgeProvider is not null)
             throw new InvalidDataException("Choose either an injected provider or a local test file, never both.");
+        if (options.KnowledgeWorkflowItemsPath is not null &&
+            (options.ProductKnowledgePath is null || !File.Exists(options.KnowledgeWorkflowItemsPath)))
+            throw new InvalidDataException("Knowledge workflow requires an existing state file and explicit test product source.");
         if (options.AiShadow && (options.AiSessionId is null || options.AiSessionId.Length != 64 || !options.AiSessionId.All(Uri.IsHexDigit)))
             throw new InvalidDataException("AI Shadow requires the 64-character SessionId of the explicit test buyer.");
         var allowedAiSession = options.AiSessionId?.ToUpperInvariant();
@@ -73,7 +76,7 @@ public sealed class QnocrShadowRunner
             mapping = Path.Combine(run, "identity.snapshot.json"); File.WriteAllText(mapping, json);
         }
         var selectedKnowledge = options.ProductKnowledgePath is null ? _knowledgeProvider :
-            new ProductKnowledgeProvider(new JsonProductKnowledgeRepository(options.ProductKnowledgePath));
+            new ProductKnowledgeProvider(new JsonProductKnowledgeRepository(options.ProductKnowledgePath, options.KnowledgeWorkflowItemsPath));
         var registry = new SessionRegistry(stateRoot, run, mapping);
         var lifecycle = new SessionRunLifecycle(stateRoot, run);
         var agentTrace = new AgentPipelineTrace(run);
@@ -95,12 +98,12 @@ public sealed class QnocrShadowRunner
         var runIds = new HashSet<string>(StringComparer.Ordinal); var sessionIds = new HashSet<string>(StringComparer.Ordinal);
         var outOfScopeMessages = 0;
         var status = "Completed";
-        AtomicJson.Write(Path.Combine(run, "session.json"), new { Version = "1.20", StartedAt = startedAt, StateDirectory = stateRoot,
+        AtomicJson.Write(Path.Combine(run, "session.json"), new { Version = "1.21", StartedAt = startedAt, StateDirectory = stateRoot,
             options.MaximumFrames, options.MaximumMinutes, options.MaxRunMegabytes, options.MaxStateMegabytes, AiEnabled = options.AiShadow, SendEnabled = false,
             AllowedAiSession = allowedAiSession, ProviderConfig = options.AiProviderConfigPath ?? "Config/ai-provider.json",
             Identity = "Per-buyer OCR label sessions; test identities are isolated, no platform identity inference",
             ProductKnowledgeEnabled = options.ProductKnowledgePath is not null });
-        Console.WriteLine($"[SHADOW V1.20] Session: {run}\nState: {stateRoot}\nAI={(options.AiShadow ? "ON" : "OFF")}; Send=OFF; first buyer snapshot is baseline. stop.request stops cleanly.");
+        Console.WriteLine($"[SHADOW V1.21] Session: {run}\nState: {stateRoot}\nAI={(options.AiShadow ? "ON" : "OFF")}; Send=OFF; first buyer snapshot is baseline. stop.request stops cleanly.");
         Console.WriteLine($"[Shadow Flags] AI_ENABLED={options.AiShadow.ToString().ToLowerInvariant()} SEND_ENABLED=false");
         try
         {

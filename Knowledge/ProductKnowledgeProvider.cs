@@ -24,19 +24,41 @@ public sealed class ProductKnowledgeProvider(IProductKnowledgeRepository reposit
             throw new InvalidDataException("Repository returned a record outside the requested seller/product scope.");
         var returned = new Dictionary<string, string>(StringComparer.Ordinal);
         var missing = new List<string>();
+        var usedItems = new List<KnowledgeItem>();
         foreach (var field in needed)
         {
-            var value = FromProfile(record.Profile, field);
-            if (value is null) record.Fields.TryGetValue(field, out value);
+            string? value;
+            if (record.KnowledgeItems is not null)
+            {
+                var matches = record.KnowledgeItems.Where(item => item.Key == field &&
+                    item.SellerId == request.SellerId && item.ProductId == productId &&
+                    item.Status == KnowledgeStatus.Published && item.Version.Status == KnowledgeStatus.Published &&
+                    item.AiUseAllowed && !string.IsNullOrWhiteSpace(item.Version.ApprovedBy) &&
+                    !string.IsNullOrWhiteSpace(item.ReviewedBy)).ToArray();
+                if (matches.Length > 1) throw new InvalidDataException("Ambiguous published knowledge field.");
+                var selected = matches.SingleOrDefault();
+                value = selected?.Value;
+                if (selected is not null) usedItems.Add(selected);
+            }
+            else
+            {
+                value = FromProfile(record.Profile, field);
+                if (value is null) record.Fields.TryGetValue(field, out value);
+            }
             if (string.IsNullOrWhiteSpace(value)) missing.Add(field);
             else returned[field] = value;
         }
         var complete = missing.Count == 0 && returned.Count > 0;
         var content = complete ? string.Join("\n", returned.Select(pair => pair.Key + ": " + pair.Value)) : "";
-        var categories = returned.Keys.Select(CategoryOf).Distinct(StringComparer.Ordinal).ToArray();
+        var categories = record.KnowledgeItems is null
+            ? returned.Keys.Select(CategoryOf).Distinct(StringComparer.Ordinal).ToArray()
+            : usedItems.Select(item => item.Category).Distinct(StringComparer.Ordinal).ToArray();
         var category = categories.Length switch { 0 => null, 1 => categories[0], _ => KnowledgeCategories.Mixed };
+        var singleItem = usedItems.Count == 1 ? usedItems[0] : null;
         return new KnowledgeResult(complete, record.Source, null, content, missing, returned,
-            record.UpdatedAt, false, record.Version, record.SellerId, category);
+            singleItem?.UpdatedAt ?? record.UpdatedAt, false,
+            singleItem?.Version.Version ?? record.Version, record.SellerId, category,
+            singleItem?.Source, singleItem?.KnowledgeId);
     }
 
     private static string? FromProfile(ProductKnowledgeProfile? profile, string field) => field switch
