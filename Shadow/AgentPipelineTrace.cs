@@ -72,8 +72,17 @@ public sealed class AgentPipelineTrace(string runDirectory)
             SellerId: request.SellerId,
             NeedFields: request.NeedFields));
     public bool KnowledgeResolved(DispatchItem item, SessionContextView context,
-        KnowledgeRequest request, KnowledgeResult result) =>
-        Write(new(DateTimeOffset.Now, "KNOWLEDGE_RESULT", item.CaptureId ?? "", item.Session.SessionId,
+        KnowledgeRequest request, KnowledgeResult result)
+    {
+        if (result.StorageSourceType is { } sourceType &&
+            !Write(new(DateTimeOffset.Now, "KNOWLEDGE_SOURCE_READ", item.CaptureId ?? "",
+                item.Session.SessionId, item.Session.BuyerId, item.MessageId, context.AiRequestId,
+                null, item.Envelope.ProductId, context.Messages.Count, null, null,
+                "Storage read completed; fact content omitted", SellerId: request.SellerId,
+                ProductReference: request.ProductReference?.ProductId,
+                ProductVersion: result.ProductVersion, StorageSourceType: sourceType.ToString())))
+            return false;
+        return Write(new(DateTimeOffset.Now, "KNOWLEDGE_RESULT", item.CaptureId ?? "", item.Session.SessionId,
             item.Session.BuyerId, item.MessageId, context.AiRequestId, null, item.Envelope.ProductId,
             context.Messages.Count, null, null, "Knowledge content is not added to AI input",
             Intent: request.Intent, Source: result.Source, Success: result.Success,
@@ -83,7 +92,9 @@ public sealed class AgentPipelineTrace(string runDirectory)
             ProductVersion: result.ProductVersion, MissingProduct: result.MissingProduct,
             KnowledgeCategory: result.KnowledgeCategory, KnowledgeId: result.KnowledgeId,
             KnowledgeSourceType: result.ItemSource?.SourceType.ToString(),
-            KnowledgeReference: result.ItemSource?.Reference));
+            KnowledgeReference: result.ItemSource?.Reference,
+            StorageSourceType: result.StorageSourceType?.ToString()));
+    }
     public bool KnowledgeError(DispatchItem item, SessionContextView context,
         KnowledgeRequest request, string errorType) =>
         Write(new(DateTimeOffset.Now, "KNOWLEDGE_ERROR", item.CaptureId ?? "", item.Session.SessionId,
@@ -104,7 +115,8 @@ public sealed class AgentPipelineTrace(string runDirectory)
             ProductVersion: result.ProductVersion, MissingProduct: result.MissingProduct,
             KnowledgeCategory: result.KnowledgeCategory, KnowledgeId: result.KnowledgeId,
             KnowledgeSourceType: result.ItemSource?.SourceType.ToString(),
-            KnowledgeReference: result.ItemSource?.Reference));
+            KnowledgeReference: result.ItemSource?.Reference,
+            StorageSourceType: result.StorageSourceType?.ToString()));
     public bool KnowledgeGuardApplied(DispatchItem item, SessionContextView context,
         KnowledgeRequest request) =>
         Write(new(DateTimeOffset.Now, "KNOWLEDGE_GUARD_APPLIED", item.CaptureId ?? "", item.Session.SessionId,

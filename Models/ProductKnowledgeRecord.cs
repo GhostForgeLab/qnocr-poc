@@ -4,4 +4,5 @@ namespace QnocrPoc.Models;
 public sealed record ProductKnowledgeRecord(string ProductId, Dictionary<string, string> Fields,
     string Source, DateTimeOffset UpdatedAt, bool IsTestData,
     string SellerId = "", string Version = "", ProductKnowledgeProfile? Profile = null,
-    IReadOnlyList<KnowledgeItem>? KnowledgeItems = null);
+    IReadOnlyList<KnowledgeItem>? KnowledgeItems = null,
+    KnowledgeStorageSourceType StorageSourceType = KnowledgeStorageSourceType.LocalFile);

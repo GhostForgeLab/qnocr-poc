@@ -19,7 +19,8 @@ public sealed class ProductKnowledgeProvider(IProductKnowledgeRepository reposit
             return new KnowledgeResult(false, "None", null, "", needed, MissingProduct: true);
         var record = await _repository.GetAsync(request.SellerId, productId, cancellationToken);
         if (record is null)
-            return new KnowledgeResult(false, "None", null, "", needed, MissingProduct: true);
+            return new KnowledgeResult(false, "None", null, "", needed, MissingProduct: true,
+                StorageSourceType: (_repository as ProductKnowledgeRepository)?.SourceType);
         if (record.SellerId != request.SellerId || record.ProductId != productId)
             throw new InvalidDataException("Repository returned a record outside the requested seller/product scope.");
         var returned = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -58,7 +59,7 @@ public sealed class ProductKnowledgeProvider(IProductKnowledgeRepository reposit
         return new KnowledgeResult(complete, record.Source, null, content, missing, returned,
             singleItem?.UpdatedAt ?? record.UpdatedAt, false,
             singleItem?.Version.Version ?? record.Version, record.SellerId, category,
-            singleItem?.Source, singleItem?.KnowledgeId);
+            singleItem?.Source, singleItem?.KnowledgeId, record.StorageSourceType);
     }
 
     private static string? FromProfile(ProductKnowledgeProfile? profile, string field) => field switch
