@@ -3,7 +3,8 @@ namespace QnocrPoc.Models;
 /// <summary>Provider result; confidence is null when unavailable or uncalibrated.</summary>
 public sealed record KnowledgeResult(bool Success, string Source, double? Confidence,
     string Content, IReadOnlyList<string> MissingFields,
-    IReadOnlyDictionary<string, string>? ReturnedFields = null, DateTimeOffset? UpdatedAt = null);
+    IReadOnlyDictionary<string, string>? ReturnedFields = null, DateTimeOffset? UpdatedAt = null,
+    bool MissingProduct = false, string? ProductVersion = null, string? SellerId = null);
 
 public static class KnowledgeStatuses
 {

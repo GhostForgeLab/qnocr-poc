@@ -159,7 +159,7 @@ public sealed class DurableShadowDispatch : IDisposable
                     }
                     if (context is not null && decision is not null)
                     {
-                        var request = KnowledgeRequestBuilder.Build(context, decision);
+                        var request = KnowledgeRequestBuilder.Build(context, decision, item.Session.SellerId);
                         if (decision.NeedKnowledge || request.NeedFields.Count > 0)
                         {
                             knowledgeRequest = request;
@@ -186,7 +186,9 @@ public sealed class DurableShadowDispatch : IDisposable
                             {
                                 AtomicJson.Write(Path.Combine(Folder(item), "knowledge-result.json"), new
                                 { knowledge.Success, knowledge.Source, knowledge.Confidence, knowledge.MissingFields,
-                                    ReturnedFields = knowledge.ReturnedFields?.Keys.ToArray(), Status = knowledgeStatus });
+                                    ReturnedFields = knowledge.ReturnedFields?.Keys.ToArray(),
+                                    knowledge.MissingProduct, knowledge.ProductVersion, knowledge.SellerId,
+                                    Status = knowledgeStatus });
                             }
                             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                             {
@@ -249,7 +251,8 @@ public sealed class DurableShadowDispatch : IDisposable
                     {
                         var preview = new ReplyPreview(item.Session.SessionId, item.Session.BuyerId, context, result.ReplySuggestion!,
                             null, DateTimeOffset.Now, "Shadow", item.CaptureId ?? "", context.AiRequestId, aiResponseId!, Guid.NewGuid().ToString("N"), decision, knowledgeStatus,
-                            knowledgeResult?.Source, knowledgeUsedByAi, knowledgeGuardApplied);
+                            knowledgeResult?.Source, knowledgeUsedByAi, knowledgeGuardApplied,
+                            knowledgeResult?.ProductVersion, knowledgeResult?.MissingProduct ?? false);
                         try
                         {
                             AtomicJson.Write(Path.Combine(Folder(item), "reply-preview.json"), preview);

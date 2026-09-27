@@ -1,5 +1,7 @@
 {
   "ProductId": "1051087533910",
+  "SellerId": "seller-test",
+  "Version": "test-v1",
   "Fields": {
     "Material": "TA1纯钛",
     "Capacity": "100ml, 200ml",

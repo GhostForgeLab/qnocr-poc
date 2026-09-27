@@ -32,6 +32,9 @@ namespace QnocrPoc.Integration.Wire
         public List<string> MissingFields { get; set; }
         public bool IsTestData { get; set; }
         public string UpdatedAt { get; set; }
+        public string SellerId { get; set; }
+        public string ProductVersion { get; set; }
+        public bool MissingProduct { get; set; }
     }
     public sealed class BuyerIdentityWire
     {

@@ -21,7 +21,8 @@ public sealed record ReplyPreview(string SessionId, string BuyerId, SessionConte
     double? Confidence, DateTimeOffset CreatedAt, string SendStatus, string CaptureId, string AiRequestId,
     string AiResponseId, string ReplyPreviewId, IntentResult? Decision = null,
     string? KnowledgeStatus = null, string? KnowledgeSource = null,
-    bool KnowledgeUsedByAi = false, bool KnowledgeGuardApplied = false)
+    bool KnowledgeUsedByAi = false, bool KnowledgeGuardApplied = false,
+    string? ProductKnowledgeVersion = null, bool MissingProduct = false)
 {
     public string? Intent => Decision?.IntentName;
     public string? RiskLevel => Decision?.RiskLevel;
@@ -33,4 +34,5 @@ public sealed record AgentPipelineEvent(DateTimeOffset Timestamp, string Event, 
     string? AiResponseId = null, string? Intent = null, double? Confidence = null, string? RiskLevel = null,
     string? Source = null, bool? Success = null,
     string? ProductReference = null, IReadOnlyList<string>? NeedFields = null,
-    IReadOnlyList<string>? MissingFields = null, IReadOnlyList<string>? ReturnedFields = null);
+    IReadOnlyList<string>? MissingFields = null, IReadOnlyList<string>? ReturnedFields = null,
+    string? SellerId = null, string? ProductVersion = null, bool? MissingProduct = null);

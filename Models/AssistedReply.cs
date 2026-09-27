@@ -24,7 +24,8 @@ public sealed record AssistedReplyView(string ReplyPreviewId, string SessionId, 
     string? ManualOutcome, DateTimeOffset? OutcomeAt, string? OutcomeBy,
     IntentResult? Decision = null, string? KnowledgeStatus = null,
     string? KnowledgeSource = null, bool KnowledgeUsedByAi = false,
-    bool KnowledgeGuardApplied = false)
+    bool KnowledgeGuardApplied = false, string? ProductKnowledgeVersion = null,
+    bool MissingProduct = false, string CurrentProductId = "")
 {
     public string? DecisionIntent => Decision?.IntentName;
     public string? DecisionRiskLevel => Decision?.RiskLevel;

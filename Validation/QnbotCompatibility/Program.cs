@@ -321,7 +321,8 @@ namespace CompatibilityHost
             var result = new StringBuilder(baseQuestion).Append("\n【本地测试商品上下文】\n");
             if (knowledge.Status == "Available")
             {
-                result.Append("ProductId: ").Append(knowledge.ProductId).Append("; Source: ").Append(knowledge.Source).Append('\n');
+                result.Append("SellerId: ").Append(knowledge.SellerId).Append("; ProductId: ").Append(knowledge.ProductId)
+                    .Append("; Version: ").Append(knowledge.ProductVersion).Append("; Source: ").Append(knowledge.Source).Append('\n');
                 foreach (var fact in knowledge.FactFields.OrderBy(pair => pair.Key, StringComparer.Ordinal))
                     result.Append(fact.Key).Append(": ").Append(fact.Value).Append('\n');
             }
@@ -336,13 +337,16 @@ namespace CompatibilityHost
             var allowed = new HashSet<string>(StringComparer.Ordinal)
             { "Capacity", "Material", "CustomizationPolicy", "Waterproof", "ShippingTime",
                 "ReturnPolicy", "CurrentPrice", "Specification", "Unspecified" };
-            if (knowledge.ProductId != envelope.ProductId || knowledge.FactFields == null || knowledge.MissingFields == null ||
+            if (knowledge.ProductId != envelope.ProductId || knowledge.SellerId != envelope.SellerId ||
+                knowledge.FactFields == null || knowledge.MissingFields == null ||
                 knowledge.FactFields.Keys.Any(key => !allowed.Contains(key)) ||
                 knowledge.MissingFields.Any(field => !allowed.Contains(field)))
                 throw new InvalidDataException("Knowledge context does not match current product or allowed fields.");
             if (knowledge.Status == "Available")
             {
-                if (knowledge.ProductId != "1051087533910" || knowledge.Source != "LocalTestProductConfig" ||
+                if (string.IsNullOrWhiteSpace(knowledge.ProductId) || string.IsNullOrWhiteSpace(knowledge.SellerId) ||
+                    string.IsNullOrWhiteSpace(knowledge.ProductVersion) || knowledge.ProductVersion.Length > 64 ||
+                    knowledge.Source != "LocalTestProductConfig" || knowledge.MissingProduct ||
                     !knowledge.IsTestData || knowledge.FactFields.Count < 1 || knowledge.FactFields.Count > 3 ||
                     knowledge.MissingFields.Count != 0 || knowledge.FactFields.Values.Any(value =>
                         string.IsNullOrWhiteSpace(value) || value.Length > 200 ||
@@ -392,6 +396,9 @@ namespace CompatibilityHost
                 ModelInputMessageCount = context.ModelInputMessageCount, CoordinatorItems = payload[0], PromptLength = payload[1],
                 AiInvoked = false, AiCalls = 0, SendEnabled = false, SentMessages = 0,
                 KnowledgeStatus = context.Knowledge == null ? null : context.Knowledge.Status,
+                KnowledgeProductVersion = context.Knowledge == null ? null : context.Knowledge.ProductVersion,
+                KnowledgeSellerId = context.Knowledge == null ? null : context.Knowledge.SellerId,
+                MissingProduct = context.Knowledge != null && context.Knowledge.MissingProduct,
                 KnowledgeFactsPresent = payload[2] == 1,
                 KnowledgeFieldNames = context.Knowledge == null ? new string[0] :
                     context.Knowledge.FactFields.Keys.OrderBy(name => name, StringComparer.Ordinal).ToArray(),

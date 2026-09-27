@@ -40,7 +40,7 @@ internal static class KnowledgeChecks
         IIntentClassifier classifier = new RuleBasedIntentClassifier();
         var specContext = Context("这款有200ml规格吗？", "1051087533910");
         var specDecision = classifier.Classify(specContext);
-        var specRequest = KnowledgeRequestBuilder.Build(specContext, specDecision);
+        var specRequest = KnowledgeRequestBuilder.Build(specContext, specDecision, "seller-test");
         check(specDecision.IntentName == "PRODUCT_SPEC_QUERY" && specRequest.SessionId == sid &&
             specRequest.Intent == "PRODUCT_SPEC_QUERY" && specRequest.Query == "这款有200ml规格吗？" &&
             specRequest.NeedFields.SequenceEqual(["Capacity"]) &&
@@ -53,7 +53,7 @@ internal static class KnowledgeChecks
             missing.Content == "" && missing.MissingFields.SequenceEqual(["Capacity"]),
             "empty provider returns Missing Capacity without content or invented confidence");
         var shippingContext = Context("多久发货？", "");
-        var shippingRequest = KnowledgeRequestBuilder.Build(shippingContext, classifier.Classify(shippingContext));
+        var shippingRequest = KnowledgeRequestBuilder.Build(shippingContext, classifier.Classify(shippingContext), "seller-test");
         check(shippingRequest.Intent == "SHIPPING_QUERY" && shippingRequest.NeedFields.SequenceEqual(["ShippingTime"]) &&
             shippingRequest.ProductReference is null,
             "shipping request names ShippingTime and never reuses a historical product when current ID is empty");

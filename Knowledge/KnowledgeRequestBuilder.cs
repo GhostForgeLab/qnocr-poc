@@ -5,7 +5,7 @@ namespace QnocrPoc.Knowledge;
 /// <summary>Field names are interface metadata, not facts or a knowledge-base schema.</summary>
 public static class KnowledgeRequestBuilder
 {
-    public static KnowledgeRequest Build(SessionContextView context, IntentResult decision)
+    public static KnowledgeRequest Build(SessionContextView context, IntentResult decision, string sellerId = "")
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(decision);
@@ -29,6 +29,6 @@ public static class KnowledgeRequestBuilder
             _ => decision.NeedKnowledge ? ["Unspecified"] : Array.Empty<string>()
         };
         return new KnowledgeRequest(context.SessionId, product, decision.IntentName, question,
-            fields, context.MessageId, context.CaptureId, DateTimeOffset.Now);
+            fields, context.MessageId, context.CaptureId, DateTimeOffset.Now, sellerId);
     }
 }

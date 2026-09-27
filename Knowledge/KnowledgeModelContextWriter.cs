@@ -19,6 +19,8 @@ public static class KnowledgeModelContextWriter
                 (string.IsNullOrWhiteSpace(context.ProductId) ? null : context.ProductId))
             throw new InvalidDataException("Knowledge request differs from the current message context.");
         var available = status == KnowledgeStatuses.Available && result.Success &&
+            !string.IsNullOrWhiteSpace(request.SellerId) && result.SellerId == request.SellerId &&
+            !string.IsNullOrWhiteSpace(result.ProductVersion) && !result.MissingProduct &&
             result.Source == "LocalTestProductConfig" && result.ReturnedFields is { Count: > 0 } &&
             !string.IsNullOrWhiteSpace(context.ProductId) && result.MissingFields.Count == 0 &&
             result.ReturnedFields.Keys.All(AllowedFacts.Contains) &&
@@ -32,7 +34,8 @@ public static class KnowledgeModelContextWriter
         var facts = available ? result.ReturnedFields! : new Dictionary<string, string>(StringComparer.Ordinal);
         var view = new KnowledgeContextView(available ? KnowledgeStatuses.Available : KnowledgeStatuses.Missing,
             context.ProductId, available ? result.Source : "None", facts,
-            available ? Array.Empty<string>() : result.MissingFields, available, available ? result.UpdatedAt : null);
+            available ? Array.Empty<string>() : result.MissingFields, available, available ? result.UpdatedAt : null,
+            request.SellerId, available ? result.ProductVersion : null, result.MissingProduct);
         var node = JsonSerializer.SerializeToNode(context)?.AsObject()
             ?? throw new InvalidDataException("Session context cannot be serialized.");
         node["Knowledge"] = JsonSerializer.SerializeToNode(view);

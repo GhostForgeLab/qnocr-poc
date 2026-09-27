@@ -73,7 +73,7 @@ public sealed class QnocrShadowRunner
             mapping = Path.Combine(run, "identity.snapshot.json"); File.WriteAllText(mapping, json);
         }
         var selectedKnowledge = options.ProductKnowledgePath is null ? _knowledgeProvider :
-            new ProductKnowledgeProvider(options.ProductKnowledgePath);
+            new ProductKnowledgeProvider(new JsonProductKnowledgeRepository(options.ProductKnowledgePath));
         var registry = new SessionRegistry(stateRoot, run, mapping);
         var lifecycle = new SessionRunLifecycle(stateRoot, run);
         var agentTrace = new AgentPipelineTrace(run);
@@ -95,12 +95,12 @@ public sealed class QnocrShadowRunner
         var runIds = new HashSet<string>(StringComparer.Ordinal); var sessionIds = new HashSet<string>(StringComparer.Ordinal);
         var outOfScopeMessages = 0;
         var status = "Completed";
-        AtomicJson.Write(Path.Combine(run, "session.json"), new { Version = "1.17", StartedAt = startedAt, StateDirectory = stateRoot,
+        AtomicJson.Write(Path.Combine(run, "session.json"), new { Version = "1.19", StartedAt = startedAt, StateDirectory = stateRoot,
             options.MaximumFrames, options.MaximumMinutes, options.MaxRunMegabytes, options.MaxStateMegabytes, AiEnabled = options.AiShadow, SendEnabled = false,
             AllowedAiSession = allowedAiSession, ProviderConfig = options.AiProviderConfigPath ?? "Config/ai-provider.json",
             Identity = "Per-buyer OCR label sessions; test identities are isolated, no platform identity inference",
             ProductKnowledgeEnabled = options.ProductKnowledgePath is not null });
-        Console.WriteLine($"[SHADOW V1.17] Session: {run}\nState: {stateRoot}\nAI={(options.AiShadow ? "ON" : "OFF")}; Send=OFF; first buyer snapshot is baseline. stop.request stops cleanly.");
+        Console.WriteLine($"[SHADOW V1.19] Session: {run}\nState: {stateRoot}\nAI={(options.AiShadow ? "ON" : "OFF")}; Send=OFF; first buyer snapshot is baseline. stop.request stops cleanly.");
         Console.WriteLine($"[Shadow Flags] AI_ENABLED={options.AiShadow.ToString().ToLowerInvariant()} SEND_ENABLED=false");
         try
         {

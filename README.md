@@ -1,7 +1,22 @@
-# qnocr-poc V1.18
+# qnocr-poc V1.19
 
 独立的千牛视觉采集实验：窗口捕获 → 布局裁剪 → OCR → BuyerMessage → 统一MessageEnvelope。
 主程序使用 C# / .NET 8 / Windows；V1.0增加独立.NET Framework 4.8离线兼容性宿主，不修改qnbot。
+
+## V1.19 多商品 Knowledge Repository基础架构
+
+`IProductKnowledgeRepository`以 `(SellerId, ProductId)` 精确读取`ProductKnowledgeRecord`；`ProductKnowledgeProvider`只依赖这个接口，不再直接读取JSON。`JsonProductKnowledgeRepository`一次性加载小型本地测试文件，拒绝重复店铺/商品键、额外字段与非测试数据；不会监听或自动更新文件。
+[Knowledge/product-knowledge.multi.sample.json](Knowledge/product-knowledge.multi.sample.json) 含两个店铺的三条**合成记录**：seller-test的商品A为100ml、商品B为200ml，seller-other下与A相同的ProductId为500ml，用于验证跨店隔离。原单商品JSON仍可作为兼容夹具，现显式记录SellerId与Version。两份数据都未经平台核验，不能用于真实客服确认。
+
+KnowledgeRequest带SellerId；未知商品返回`MissingProduct=true`、Success=false，绝不回退到另一商品或店铺。KnowledgeResult和人工预览增加商品Version、Source与MissingProduct；人工视图另列`CurrentProductId`，与历史引用列表区分；`KNOWLEDGE_REQUEST/RESULT`记录SellerId、ProductId、Version和来源，但不记录商品字段值。隔离AI宿主还会核对知识上下文的SellerId/ProductId与原MessageEnvelope一致，拒绝串店篡改。
+
+```powershell
+# 仅在隔离测试映射和指定测试Session下显式启用合成多商品文件
+$testSessionId = '替换为64位隔离测试SessionId'
+dotnet run -- --shadow --ai-shadow --identity Validation/QnbotCompatibility/identity_mapping.json --ai-session $testSessionId --provider-config Config/ai-provider.json --product-knowledge Knowledge/product-knowledge.multi.sample.json --minutes 3
+```
+
+本阶段只是仓储与Provider接口架构，不提供商品资料后台、真实批量导入、RAG、向量检索或自动发送。未来数据库Repository还需独立的数据来源与信任策略设计。验证见 [VALIDATION_V119.md](VALIDATION_V119.md)。
 
 ## V1.18 Feedback Learning Router只读反馈分类
 
@@ -930,5 +945,5 @@ dotnet run 2>&1 | Tee-Object -FilePath Output/run.log
 截图和原始日志保留在本地 Output，不进入 Git。
 历史实测：V0.1 [VALIDATION.md](VALIDATION.md)，V0.2 [VALIDATION_V02.md](VALIDATION_V02.md)。
 
-V1.18已具备只读人工反馈分类与优化方向统计；真实平台Buyer身份仍未验证，工作台不会发送消息。
+V1.19已具备店铺作用域的多商品测试Repository与Knowledge版本元数据；真实平台Buyer身份仍未验证，工作台不会发送消息。
 UIA仍仅用于几何定位，不读取消息或商品ID文本；qnbot核心与MessageEnvelope未修改。

@@ -299,7 +299,8 @@ public sealed class AssistantReplyService(string stateRoot, IFeedbackRouter? fee
             state.EditedAt, state.EditedBy, state.ApprovedAt, state.ApprovedBy, state.CopiedAt, state.CopiedBy,
             preview.SendStatus, state.ManualOutcome, state.OutcomeAt, state.OutcomeBy,
             preview.Decision, preview.KnowledgeStatus, preview.KnowledgeSource,
-            preview.KnowledgeUsedByAi, preview.KnowledgeGuardApplied);
+            preview.KnowledgeUsedByAi, preview.KnowledgeGuardApplied,
+            preview.ProductKnowledgeVersion, preview.MissingProduct, preview.Input.ProductId);
     }
 
     private static string Effective(AssistedReplyState state) => state.EditedReply ?? state.OriginalAiReply;

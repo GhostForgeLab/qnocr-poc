@@ -69,6 +69,7 @@ public sealed class AgentPipelineTrace(string runDirectory)
             item.Session.BuyerId, item.MessageId, context.AiRequestId, null, item.Envelope.ProductId,
             context.Messages.Count, null, null, "Read-only provider lookup requested; query text omitted",
             Intent: request.Intent, ProductReference: request.ProductReference?.ProductId,
+            SellerId: request.SellerId,
             NeedFields: request.NeedFields));
     public bool KnowledgeResolved(DispatchItem item, SessionContextView context,
         KnowledgeRequest request, KnowledgeResult result) =>
@@ -78,13 +79,15 @@ public sealed class AgentPipelineTrace(string runDirectory)
             Intent: request.Intent, Source: result.Source, Success: result.Success,
             ProductReference: request.ProductReference?.ProductId,
             NeedFields: request.NeedFields, MissingFields: result.MissingFields,
-            ReturnedFields: result.ReturnedFields?.Keys.ToArray()));
+            ReturnedFields: result.ReturnedFields?.Keys.ToArray(), SellerId: request.SellerId,
+            ProductVersion: result.ProductVersion, MissingProduct: result.MissingProduct));
     public bool KnowledgeError(DispatchItem item, SessionContextView context,
         KnowledgeRequest request, string errorType) =>
         Write(new(DateTimeOffset.Now, "KNOWLEDGE_ERROR", item.CaptureId ?? "", item.Session.SessionId,
             item.Session.BuyerId, item.MessageId, context.AiRequestId, null, item.Envelope.ProductId,
             context.Messages.Count, null, null, errorType + "; AI continues without knowledge",
             Intent: request.Intent, ProductReference: request.ProductReference?.ProductId,
+            SellerId: request.SellerId,
             NeedFields: request.NeedFields));
     public bool KnowledgeContextAttached(DispatchItem item, SessionContextView context,
         KnowledgeRequest request, KnowledgeResult result, string status) =>
@@ -94,13 +97,15 @@ public sealed class AgentPipelineTrace(string runDirectory)
             Intent: request.Intent, Source: result.Source, Success: result.Success,
             ProductReference: request.ProductReference?.ProductId,
             NeedFields: request.NeedFields, MissingFields: result.MissingFields,
-            ReturnedFields: result.ReturnedFields?.Keys.ToArray()));
+            ReturnedFields: result.ReturnedFields?.Keys.ToArray(), SellerId: request.SellerId,
+            ProductVersion: result.ProductVersion, MissingProduct: result.MissingProduct));
     public bool KnowledgeGuardApplied(DispatchItem item, SessionContextView context,
         KnowledgeRequest request) =>
         Write(new(DateTimeOffset.Now, "KNOWLEDGE_GUARD_APPLIED", item.CaptureId ?? "", item.Session.SessionId,
             item.Session.BuyerId, item.MessageId, context.AiRequestId, null, item.Envelope.ProductId,
             context.Messages.Count, null, null, "Unsupported fact replaced with human-review fallback",
             Intent: request.Intent, ProductReference: request.ProductReference?.ProductId,
+            SellerId: request.SellerId,
             MissingFields: request.NeedFields));
     public bool KnowledgeSkipped(DispatchItem item, SessionContextView context, IntentResult decision) =>
         Write(new(DateTimeOffset.Now, "KNOWLEDGE_SKIPPED", item.CaptureId ?? "", item.Session.SessionId,

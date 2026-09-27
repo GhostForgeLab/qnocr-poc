@@ -1,0 +1,40 @@
+{
+  "Products": [
+    {
+      "SellerId": "seller-test",
+      "ProductId": "1051087533910",
+      "Version": "test-v1",
+      "Fields": {
+        "Capacity": "100ml",
+        "Material": "TA1纯钛",
+        "CustomizationPolicy": "支持刻字"
+      },
+      "Source": "LocalTestProductConfig",
+      "UpdatedAt": "2026-09-27T00:00:00+08:00",
+      "IsTestData": true
+    },
+    {
+      "SellerId": "seller-test",
+      "ProductId": "2000000000001",
+      "Version": "test-v2",
+      "Fields": {
+        "Capacity": "200ml",
+        "Material": "304不锈钢"
+      },
+      "Source": "LocalTestProductConfig",
+      "UpdatedAt": "2026-09-27T00:00:00+08:00",
+      "IsTestData": true
+    },
+    {
+      "SellerId": "seller-other",
+      "ProductId": "1051087533910",
+      "Version": "other-store-test-v1",
+      "Fields": {
+        "Capacity": "500ml"
+      },
+      "Source": "LocalTestProductConfig",
+      "UpdatedAt": "2026-09-27T00:00:00+08:00",
+      "IsTestData": true
+    }
+  ]
+}

@@ -9,7 +9,7 @@ internal static class ProductKnowledgeChecks
     public static async Task RunAsync(Action<bool, string> check)
     {
         var source = Path.GetFullPath(Path.Combine("Knowledge", "product-knowledge.json"));
-        IKnowledgeProvider provider = new ProductKnowledgeProvider(source);
+        IKnowledgeProvider provider = new ProductKnowledgeProvider(new JsonProductKnowledgeRepository(source));
         var sid = new string('A', 64); var id = "1051087533910";
         SessionContextView Context(string question, string productId, string messageId) => new(sid, "buyer-test", productId,
             [new EnvelopeMessage("buyer", question, new DateTime(2026, 9, 26, 12, 0, 0))],
@@ -17,20 +17,20 @@ internal static class ProductKnowledgeChecks
         var classifier = new RuleBasedIntentClassifier();
         var specContext = Context("这款有200ml规格吗？", id, new string('1', 64));
         var specDecision = classifier.Classify(specContext);
-        var specRequest = KnowledgeRequestBuilder.Build(specContext, specDecision);
+        var specRequest = KnowledgeRequestBuilder.Build(specContext, specDecision, "seller-test");
         var spec = await provider.GetAsync(specRequest);
         check(specDecision.IntentName == "PRODUCT_SPEC_QUERY" && specRequest.NeedFields.SequenceEqual(["Capacity"]) &&
             spec.Success && spec.Source == "LocalTestProductConfig" && spec.ReturnedFields?["Capacity"].Contains("200ml") == true &&
             spec.Content.Contains("200ml") && spec.MissingFields.Count == 0 && spec.Confidence is null,
             "one local test product supplies the requested 200ml Capacity fact without invented confidence");
         var materialContext = Context("什么材质？", id, new string('2', 64));
-        var material = await provider.GetAsync(KnowledgeRequestBuilder.Build(materialContext, classifier.Classify(materialContext)));
+        var material = await provider.GetAsync(KnowledgeRequestBuilder.Build(materialContext, classifier.Classify(materialContext), "seller-test"));
         check(material.Success && material.ReturnedFields?["Material"] == "TA1纯钛" &&
             material.MissingFields.Count == 0,
             "material query returns only the local TA1 pure-titanium test field");
         var waterproofContext = Context("防水等级是多少？", id, new string('3', 64));
         var waterproofDecision = classifier.Classify(waterproofContext);
-        var waterproofRequest = KnowledgeRequestBuilder.Build(waterproofContext, waterproofDecision);
+        var waterproofRequest = KnowledgeRequestBuilder.Build(waterproofContext, waterproofDecision, "seller-test");
         var waterproof = await provider.GetAsync(waterproofRequest);
         check(waterproofDecision.IntentName == "OTHER" && waterproofRequest.NeedFields.SequenceEqual(["Waterproof"]) &&
             !waterproof.Success && waterproof.MissingFields.SequenceEqual(["Waterproof"]) && waterproof.Content == "",
@@ -44,7 +44,7 @@ internal static class ProductKnowledgeChecks
         var extraJson = Path.Combine(root, "extra-field.json");
         File.WriteAllText(extraJson, File.ReadAllText(source).Replace("\"IsTestData\": true",
             "\"IsTestData\": true, \"ApiKey\": \"must-reject\""));
-        try { _ = new ProductKnowledgeProvider(extraJson); throw new Exception("unknown top-level property accepted"); }
+        try { _ = new JsonProductKnowledgeRepository(extraJson); throw new Exception("unknown top-level property accepted"); }
         catch (JsonException) { check(true, "local test record rejects unmapped credential-like properties"); }
         try { await new QnocrShadowRunner().RunAsync(new ShadowRunOptions(ProductKnowledgePath: source));
             throw new Exception("local test facts accepted without AI Shadow opt-in"); }
@@ -53,8 +53,8 @@ internal static class ProductKnowledgeChecks
 
         var invalidJson = Path.Combine(root, "invalid-product.json");
         File.WriteAllText(invalidJson, JsonSerializer.Serialize(new ProductKnowledgeRecord(id,
-            new Dictionary<string, string> { ["Waterproof"] = "IPX8" }, "LocalTestProductConfig", DateTimeOffset.Now, true)));
-        try { _ = new ProductKnowledgeProvider(invalidJson); throw new Exception("invalid product field accepted"); }
+            new Dictionary<string, string> { ["Waterproof"] = "IPX8" }, "LocalTestProductConfig", DateTimeOffset.Now, true, "seller-test", "test-v1")));
+        try { _ = new JsonProductKnowledgeRepository(invalidJson); throw new Exception("invalid product field accepted"); }
         catch (InvalidDataException) { check(true, "single-product source refuses unapproved fields instead of importing a catalog"); }
 
         async Task<ReplyPreview> Dispatch(string name, SessionContextView context, string fakeReply,

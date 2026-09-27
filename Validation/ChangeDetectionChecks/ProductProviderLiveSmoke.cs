@@ -28,7 +28,8 @@ internal static class ProductProviderLiveSmoke
         if (!trace.MessageCaptured(item)) throw new IOException("Agent audit unavailable; no AI request started.");
         using var dispatch = new DurableShadowDispatch(state, Path.Combine(root, "lifecycle.jsonl"), CancellationToken.None,
             new AgentShadowClient(providerConfigPath).ConvertAsync, true, trace,
-            knowledgeProvider: new ProductKnowledgeProvider(Path.Combine("Knowledge", "product-knowledge.json")),
+            knowledgeProvider: new ProductKnowledgeProvider(new JsonProductKnowledgeRepository(
+                Path.Combine("Knowledge", "product-knowledge.json"))),
             enrichAiContext: true);
         if (!dispatch.Submit(item, context)) throw new InvalidOperationException("Synthetic fixture unexpectedly duplicated.");
         dispatch.Start(); await dispatch.StopAsync();
