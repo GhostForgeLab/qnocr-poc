@@ -15,6 +15,7 @@
   <ItemGroup>
     <Using Include="System.IO" />
     <Compile Remove="Validation/**/*.cs" />
+    <Compile Remove="Output/**/*.cs" />
     <Compile Remove="KnowledgeConsole/**/*.cs" />
     <Compile Remove="Integration/**/*.cs" />
     <None Update="Product/product-profiles.sample.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
