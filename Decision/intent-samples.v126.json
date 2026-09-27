@@ -1,0 +1,22 @@
+[
+  { "Id": "S01", "Message": "这款有200ml规格吗？", "ExpectedIntent": "PRODUCT_SPEC_QUERY" },
+  { "Id": "S02", "Message": "杯子多大，能装多少水？", "ExpectedIntent": "PRODUCT_SPEC_QUERY" },
+  { "Id": "S03", "Message": "同系列有更小号的吗？", "ExpectedIntent": "PRODUCT_SPEC_QUERY" },
+  { "Id": "M01", "Message": "是TA1纯钛做的吗？", "ExpectedIntent": "MATERIAL_QUERY" },
+  { "Id": "M02", "Message": "内胆用的什么材料？", "ExpectedIntent": "MATERIAL_QUERY" },
+  { "Id": "H01", "Message": "今天下单何时寄出？", "ExpectedIntent": "SHIPPING_QUERY" },
+  { "Id": "H02", "Message": "寄到上海一般要几天？", "ExpectedIntent": "SHIPPING_QUERY" },
+  { "Id": "A01", "Message": "刻字后还能退吗？", "ExpectedIntent": "AFTER_SALES_QUERY" },
+  { "Id": "A02", "Message": "收到后发现划痕怎么处理？", "ExpectedIntent": "AFTER_SALES_QUERY" },
+  { "Id": "A03", "Message": "不合适能换吗？", "ExpectedIntent": "AFTER_SALES_QUERY" },
+  { "Id": "C01", "Message": "可以刻名字吗？", "ExpectedIntent": "CUSTOMIZATION_QUERY" },
+  { "Id": "C02", "Message": "杯盖能印公司logo吗？", "ExpectedIntent": "CUSTOMIZATION_QUERY" },
+  { "Id": "P01", "Message": "现在买需要付多少？", "ExpectedIntent": "PRICE_QUERY" },
+  { "Id": "P02", "Message": "有优惠券吗？", "ExpectedIntent": "PRICE_QUERY" },
+  { "Id": "G01", "Message": "送朋友合适吗？", "ExpectedIntent": "GIFT_QUERY" },
+  { "Id": "G02", "Message": "想买给老师当礼物，会不会太随意？", "ExpectedIntent": "GIFT_QUERY" },
+  { "Id": "K01", "Message": "这款适合收藏展示吗？", "ExpectedIntent": "COLLECTION_QUERY" },
+  { "Id": "K02", "Message": "限量款值得收着不拆吗？", "ExpectedIntent": "COLLECTION_QUERY" },
+  { "Id": "O01", "Message": "这东西怎么样？", "ExpectedIntent": "OTHER" },
+  { "Id": "O02", "Message": "我再看看。", "ExpectedIntent": "OTHER" }
+]

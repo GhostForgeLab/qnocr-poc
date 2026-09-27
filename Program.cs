@@ -12,6 +12,7 @@ using QnocrPoc.Messages;
 using QnocrPoc.Adapter;
 using QnocrPoc.Shadow;
 using QnocrPoc.Knowledge;
+using QnocrPoc.Decision;
 
 // Owned one-shot native workers: parent kills only these helpers on timeout. No UI/send action.
 if (args.Length == 4 && args[0] == "--capture-worker")
@@ -32,7 +33,7 @@ if (args.Length == 3 && args[0] == "--ocr-worker")
 }
 
 Console.OutputEncoding = Encoding.UTF8;
-Console.WriteLine("[QN OCR POC V1.25]");
+Console.WriteLine("[QN OCR POC V1.26]");
 Console.WriteLine($"Time: {DateTimeOffset.Now:O}");
 Console.WriteLine($"Runtime: {System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription}");
 var operation = "Capture";
@@ -70,6 +71,26 @@ try
         return KnowledgeImportRevisionCommand.Run(args);
     }
 
+    if (args.Length > 0 && args[0] == "--compare-intents")
+    {
+        operation = "JEV intent comparison";
+        if (args.Length != 4)
+        {
+            Console.Error.WriteLine("Usage: --compare-intents SAMPLES_JSON JEV_CONFIG_JSON OUTPUT_DIR");
+            return 2;
+        }
+        var samples = JsonSerializer.Deserialize<List<IntentSample>>(File.ReadAllText(args[1]))
+            ?? throw new InvalidDataException("Intent samples are null.");
+        var config = JEVProviderConfig.Load(args[2]);
+        using var jev = new JEVIntentClassifier(config);
+        var comparisons = new IntentComparisonRunner(new RuleBasedIntentClassifier(), jev)
+            .Compare(samples, args[3]);
+        var matched = comparisons.Count(item => item.Match == true);
+        var different = comparisons.Count(item => item.Match == false);
+        var unavailable = comparisons.Count(item => item.Match is null);
+        Console.WriteLine($"[Intent Comparison] total={comparisons.Count} matched={matched} different={different} unavailable={unavailable}; Output={Path.GetFullPath(args[3])}; AgentRuleBased=UNCHANGED; Send=OFF");
+        return unavailable == 0 ? 0 : 3;
+    }
     if (args.Length > 0 && args[0] == "--shadow")
     {
         int? frames = null;
