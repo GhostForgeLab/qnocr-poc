@@ -33,7 +33,7 @@ if (args.Length == 3 && args[0] == "--ocr-worker")
 }
 
 Console.OutputEncoding = Encoding.UTF8;
-Console.WriteLine("[QN OCR POC V1.26]");
+Console.WriteLine("[QN OCR POC V1.27]");
 Console.WriteLine($"Time: {DateTimeOffset.Now:O}");
 Console.WriteLine($"Runtime: {System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription}");
 var operation = "Capture";
@@ -103,6 +103,7 @@ try
         string? providerConfig = null;
         string? productKnowledge = null;
         string? knowledgeItems = null;
+        var intentProviderConfig = Path.Combine("Config", "intent-provider.json");
         var maxRunMb = 1024.0; var maxStateMb = 4096.0;
         var seen = new HashSet<string>(StringComparer.Ordinal);
         for (var i = 1; i < args.Length; i++)
@@ -119,6 +120,7 @@ try
             else if (args[i] == "--provider-config" && !string.IsNullOrWhiteSpace(args[i + 1])) providerConfig = args[i + 1];
             else if (args[i] == "--product-knowledge" && !string.IsNullOrWhiteSpace(args[i + 1])) productKnowledge = args[i + 1];
             else if (args[i] == "--knowledge-items" && !string.IsNullOrWhiteSpace(args[i + 1])) knowledgeItems = args[i + 1];
+            else if (args[i] == "--intent-provider-config" && !string.IsNullOrWhiteSpace(args[i + 1])) intentProviderConfig = args[i + 1];
             else if (args[i] == "--max-run-mb" && double.TryParse(args[i + 1], out var runLimit) && double.IsFinite(runLimit) && runLimit > 0) maxRunMb = runLimit;
             else if (args[i] == "--max-state-mb" && double.TryParse(args[i + 1], out var stateLimit) && double.IsFinite(stateLimit) && stateLimit > 0) maxStateMb = stateLimit;
             else { Console.Error.WriteLine("Invalid shadow option/value."); return 2; }
@@ -131,7 +133,7 @@ try
         try
         {
             var summary = await new QnocrShadowRunner().RunAsync(new(frames, interval, identity, aiShadow, minutes, stateDirectory, aiSession, providerConfig, maxRunMb, maxStateMb,
-                productKnowledge, knowledgeItems), cancellation.Token);
+                productKnowledge, knowledgeItems, intentProviderConfig), cancellation.Token);
             return summary.Status is "Completed" or "Cancelled" or "StoppedByRequest" ? 0 : 3;
         }
         finally { Console.CancelKeyPress -= handler; }

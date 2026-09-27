@@ -24,6 +24,12 @@ public sealed class AgentPipelineTrace(string runDirectory)
             }
         }
     }
+    public void IntentProviderObserved(IntentProviderTrace observation) =>
+        Write(new AgentPipelineEvent(observation.Timestamp, observation.Event,
+            observation.CaptureId ?? "", observation.SessionId, null, observation.MessageId,
+            null, null, "", 0, null, null, observation.Reason,
+            Intent: observation.Intent, Provider: observation.Provider,
+            FallbackUsed: observation.FallbackUsed));
     public bool MessageCaptured(DispatchItem item)
     {
         var captureId = item.CaptureId ?? string.Empty;

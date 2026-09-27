@@ -1,0 +1,6 @@
+{
+  "Endpoint": "https://api.typesafe.ai/v1/systemone",
+  "Model": "jev-latest",
+  "TimeoutSeconds": 8,
+  "Enabled": true
+}

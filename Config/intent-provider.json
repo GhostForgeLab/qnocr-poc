@@ -1,0 +1,6 @@
+{
+  "Provider": "JEV",
+  "Fallback": "RuleBased",
+  "Enabled": true,
+  "JevConfigPath": "jev-provider.runtime.json"
+}

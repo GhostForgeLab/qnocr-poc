@@ -3,6 +3,7 @@ using System.Text.Json;
 using QnocrPoc.Adapter;
 using QnocrPoc.Capture;
 using QnocrPoc.Detection;
+using QnocrPoc.Decision;
 using QnocrPoc.Layout;
 using QnocrPoc.Knowledge;
 using QnocrPoc.Messages;
@@ -14,7 +15,8 @@ namespace QnocrPoc.Shadow;
 public sealed record ShadowRunOptions(int? MaximumFrames = null, int IntervalMilliseconds = 1000, string? IdentityMappingPath = null,
     bool AiShadow = false, double? MaximumMinutes = null, string? StateDirectory = null, string? AiSessionId = null,
     string? AiProviderConfigPath = null, double MaxRunMegabytes = 1024, double MaxStateMegabytes = 4096,
-    string? ProductKnowledgePath = null, string? KnowledgeWorkflowItemsPath = null);
+    string? ProductKnowledgePath = null, string? KnowledgeWorkflowItemsPath = null,
+    string? IntentProviderConfigPath = null);
 public sealed record ShadowRunSummary(string Status, int Attempts, int SuccessfulFrames, int FailedFrames,
     int ProductOcrCalls, int ChatOcrCalls, int Envelopes, int ConvertedEnvelopes, int DeferredEnvelopes, string SessionDirectory,
     int NewMessages, int BaselineMessages, int DuplicateObservations, int HistoricalObservations, int ConvertedMessages,
@@ -81,6 +83,11 @@ public sealed class QnocrShadowRunner
         var registry = new SessionRegistry(stateRoot, run, mapping);
         var lifecycle = new SessionRunLifecycle(stateRoot, run);
         var agentTrace = new AgentPipelineTrace(run);
+        using var intentSelection = options.IntentProviderConfigPath is null
+            ? IntentClassifierFactory.RuleOnly(agentTrace.IntentProviderObserved)
+            : IntentClassifierFactory.Create(options.IntentProviderConfigPath, agentTrace.IntentProviderObserved);
+        Console.WriteLine($"INTENT_PROVIDER_SELECTED: {intentSelection.SelectedProvider}; FallbackUsed={intentSelection.FallbackUsed}");
+
         var native = new NativeWorkerClient();
         var windowCapture = new QianniuWindowCapture();
         var profiles = new ProductContextResolver(Path.Combine(AppContext.BaseDirectory, "Product", "product-profiles.sample.json"));
@@ -89,7 +96,8 @@ public sealed class QnocrShadowRunner
             _adapt ?? (options.AiShadow
                 ? new AgentShadowClient(options.AiProviderConfigPath).ConvertAsync
                 : new ShadowAdapterClient(dispatch: true).ConvertAsync), options.AiShadow, agentTrace,
-            knowledgeProvider: selectedKnowledge, enrichAiContext: options.ProductKnowledgePath is not null);
+            intentClassifier: intentSelection.Classifier, knowledgeProvider: selectedKnowledge,
+            enrichAiContext: options.ProductKnowledgePath is not null);
         dispatch.Start();
         var startedAt = DateTimeOffset.Now;
         var watch = Stopwatch.StartNew(); var nextHeartbeat = TimeSpan.Zero; var peakWorkingSet = 0L; var confirmedObservations = 0;
@@ -99,12 +107,14 @@ public sealed class QnocrShadowRunner
         var runIds = new HashSet<string>(StringComparer.Ordinal); var sessionIds = new HashSet<string>(StringComparer.Ordinal);
         var outOfScopeMessages = 0;
         var status = "Completed";
-        AtomicJson.Write(Path.Combine(run, "session.json"), new { Version = "1.26", StartedAt = startedAt, StateDirectory = stateRoot,
+        AtomicJson.Write(Path.Combine(run, "session.json"), new { Version = "1.27", StartedAt = startedAt, StateDirectory = stateRoot,
             options.MaximumFrames, options.MaximumMinutes, options.MaxRunMegabytes, options.MaxStateMegabytes, AiEnabled = options.AiShadow, SendEnabled = false,
             AllowedAiSession = allowedAiSession, ProviderConfig = options.AiProviderConfigPath ?? "Config/ai-provider.json",
             Identity = "Per-buyer OCR label sessions; test identities are isolated, no platform identity inference",
-            ProductKnowledgeEnabled = options.ProductKnowledgePath is not null });
-        Console.WriteLine($"[SHADOW V1.26] Session: {run}\nState: {stateRoot}\nAI={(options.AiShadow ? "ON" : "OFF")}; Send=OFF; first buyer snapshot is baseline. stop.request stops cleanly.");
+            ProductKnowledgeEnabled = options.ProductKnowledgePath is not null,
+            IntentProvider = intentSelection.SelectedProvider, IntentFallbackUsed = intentSelection.FallbackUsed,
+            IntentProviderConfig = options.IntentProviderConfigPath });
+        Console.WriteLine($"[SHADOW V1.27] Session: {run}\nState: {stateRoot}\nAI={(options.AiShadow ? "ON" : "OFF")}; Send=OFF; first buyer snapshot is baseline. stop.request stops cleanly.");
         Console.WriteLine($"[Shadow Flags] AI_ENABLED={options.AiShadow.ToString().ToLowerInvariant()} SEND_ENABLED=false");
         try
         {

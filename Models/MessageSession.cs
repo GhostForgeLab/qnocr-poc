@@ -39,4 +39,4 @@ public sealed record AgentPipelineEvent(DateTimeOffset Timestamp, string Event, 
     string? SellerId = null, string? ProductVersion = null, bool? MissingProduct = null,
     string? KnowledgeCategory = null, string? KnowledgeId = null,
     string? KnowledgeSourceType = null, string? KnowledgeReference = null,
-    string? StorageSourceType = null);
+    string? StorageSourceType = null, string? Provider = null, bool? FallbackUsed = null);
