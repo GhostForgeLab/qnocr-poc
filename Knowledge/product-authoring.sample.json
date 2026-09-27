@@ -1,0 +1,18 @@
+{
+  "SellerId": "seller-test",
+  "ProductId": "1051087533910",
+  "Name": "合成测试钛杯",
+  "Version": "authoring-test-v1",
+  "Source": {
+    "SourceType": "ManualInput",
+    "SourceName": "synthetic-authoring-fixture",
+    "Reference": "test-fixture:v122",
+    "CapturedAt": "2026-09-27T12:00:00+08:00"
+  },
+  "IsTestData": true,
+  "Capacity": ["100ml", "200ml"],
+  "Material": "TA1纯钛",
+  "Features": [
+    { "FeatureName": "Engraving", "Description": "支持刻字" }
+  ]
+}

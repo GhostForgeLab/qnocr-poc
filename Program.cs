@@ -11,6 +11,7 @@ using QnocrPoc.Product;
 using QnocrPoc.Messages;
 using QnocrPoc.Adapter;
 using QnocrPoc.Shadow;
+using QnocrPoc.Knowledge;
 
 // Owned one-shot native workers: parent kills only these helpers on timeout. No UI/send action.
 if (args.Length == 4 && args[0] == "--capture-worker")
@@ -31,7 +32,7 @@ if (args.Length == 3 && args[0] == "--ocr-worker")
 }
 
 Console.OutputEncoding = Encoding.UTF8;
-Console.WriteLine("[QN OCR POC V1.21]");
+Console.WriteLine("[QN OCR POC V1.22]");
 Console.WriteLine($"Time: {DateTimeOffset.Now:O}");
 Console.WriteLine($"Runtime: {System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription}");
 var operation = "Capture";
@@ -54,6 +55,12 @@ try
     {
         operation = "Human send confirmation";
         return await ConfirmSendCommand.RunAsync(args);
+    }
+
+    if (args.Length > 0 && args[0] is "--knowledge-draft" or "--knowledge-show" or "--knowledge-review")
+    {
+        operation = "Knowledge authoring";
+        return KnowledgeAuthoringCommand.Run(args);
     }
 
     if (args.Length > 0 && args[0] == "--shadow")

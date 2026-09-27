@@ -13,6 +13,8 @@ public static class ProductKnowledgeSchemaValidator
             string.IsNullOrWhiteSpace(profile.Identity.ProductId) ||
             profile.Identity.SellerId != record.SellerId || profile.Identity.ProductId != record.ProductId)
             throw new InvalidDataException("Profile SellerId/ProductId must match the record identity.");
+        if (!ValidOptional(profile.Identity.ProductName, 100))
+            throw new InvalidDataException("Invalid optional product name.");
         if (profile.Specification?.Capacity is { Count: > 0 } capacities &&
             record.Fields.TryGetValue("Capacity", out var legacyCapacity) &&
             legacyCapacity != string.Join(", ", capacities))

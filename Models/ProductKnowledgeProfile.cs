@@ -12,7 +12,7 @@ public sealed record ProductKnowledgeProfile(
     IReadOnlyList<ProductRestriction>? Restrictions = null,
     ProductKnowledgeMetadata? Metadata = null);
 
-public sealed record ProductKnowledgeIdentity(string SellerId, string ProductId);
+public sealed record ProductKnowledgeIdentity(string SellerId, string ProductId, string? ProductName = null);
 public sealed record ProductSpecification(IReadOnlyList<string>? Capacity = null, string? Size = null, string? Weight = null);
 public sealed record ProductMaterial(string MaterialName, string? Description = null);
 public sealed record ProductFeature(string FeatureName, string? Description = null);

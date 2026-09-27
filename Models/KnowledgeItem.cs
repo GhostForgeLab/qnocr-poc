@@ -6,7 +6,7 @@ namespace QnocrPoc.Models;
 public enum KnowledgeStatus { Draft, Reviewing, Approved, Rejected, Published }
 
 [JsonConverter(typeof(JsonStringEnumConverter<KnowledgeSourceType>))]
-public enum KnowledgeSourceType { ProductPage, ManualInput, ImageSpec, CustomerFeedback }
+public enum KnowledgeSourceType { ProductPage, ManualInput, ImageSpec, CustomerFeedback, Import, AssistantGenerated }
 
 public sealed record KnowledgeSource(KnowledgeSourceType SourceType, string SourceName,
     string Reference, DateTimeOffset CapturedAt);

@@ -48,6 +48,44 @@ public sealed class KnowledgeReviewService
         return item;
     }
 
+    /// <summary>Create all fields of one explicit product draft with one state write.</summary>
+    public IReadOnlyList<KnowledgeItem> CreateDraftBatch(string sellerId, string productId,
+        IReadOnlyList<(string Category, string Key, string Value)> facts,
+        KnowledgeSource source, string version, string actor)
+    {
+        Require(sellerId, nameof(sellerId)); Require(productId, nameof(productId));
+        Require(version, nameof(version)); Require(actor, nameof(actor));
+        ArgumentNullException.ThrowIfNull(source);
+        Require(source.SourceName, nameof(source.SourceName)); Require(source.Reference, nameof(source.Reference));
+        if (!Enum.IsDefined(source.SourceType) || source.CapturedAt == default ||
+            facts is null || facts.Count is < 1 or > 18 ||
+            facts.Select(f => f.Key).Distinct(StringComparer.Ordinal).Count() != facts.Count)
+            throw new ArgumentException("Invalid bounded authoring batch.");
+        foreach (var fact in facts)
+        {
+            Require(fact.Category, nameof(fact.Category)); Require(fact.Key, nameof(fact.Key));
+            Require(fact.Value, nameof(fact.Value));
+            if (fact.Value.Length > 200 || fact.Value.Any(ch => char.IsControl(ch) || ch is '<' or '>' or '{' or '}'))
+                throw new ArgumentException("Invalid bounded knowledge value.");
+        }
+        var now = DateTimeOffset.UtcNow;
+        var created = facts.Select(fact => new KnowledgeItem(Guid.NewGuid().ToString("N"),
+            sellerId, productId, fact.Category, fact.Key, fact.Value, source, now, now,
+            KnowledgeStatus.Draft, new KnowledgeVersion(version, now, null, KnowledgeStatus.Draft))).ToArray();
+        lock (_gate)
+        {
+            var items = Read();
+            if (facts.Any(fact => items.Any(item => item.SellerId == sellerId &&
+                item.ProductId == productId && item.Key == fact.Key &&
+                item.Status == KnowledgeStatus.Published && item.Value != fact.Value)))
+                throw new InvalidOperationException("A published value changed during draft creation.");
+            if (items.Count + created.Length > 256) throw new InvalidDataException("Knowledge test state exceeds 256 items.");
+            items.AddRange(created);
+            foreach (var item in created) Audit("KNOWLEDGE_CREATED", item, actor);
+            Save(items);
+        }
+        return created;
+    }
     public KnowledgeItem SubmitForReview(string knowledgeId, string actor) =>
         Transition(knowledgeId, KnowledgeStatus.Draft, KnowledgeStatus.Reviewing, actor);
 

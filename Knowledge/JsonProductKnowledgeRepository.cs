@@ -4,7 +4,7 @@ using QnocrPoc.Models;
 
 namespace QnocrPoc.Knowledge;
 
-/// <summary>Small, bounded local test-file repository. Loaded once; no database, watch, import, or mutation.</summary>
+/// <summary>Bounded test repository; legacy records are cached, review state is re-read per lookup.</summary>
 public sealed class JsonProductKnowledgeRepository : IProductKnowledgeRepository
 {
     private static readonly HashSet<string> AllowedFields = new(StringComparer.Ordinal)
@@ -53,9 +53,11 @@ public sealed class JsonProductKnowledgeRepository : IProductKnowledgeRepository
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        if (!_records.TryGetValue((sellerId, productId), out var record))
+        _records.TryGetValue((sellerId, productId), out var record);
+        if (record is null && _workflowItemsPath is null)
             return Task.FromResult<ProductKnowledgeRecord?>(null);
         IReadOnlyList<KnowledgeItem>? published = _workflowItemsPath is null ? null : [];
+        KnowledgeItem[] matching = [];
         if (_workflowItemsPath is not null)
         {
             if (!File.Exists(_workflowItemsPath))
@@ -66,14 +68,20 @@ public sealed class JsonProductKnowledgeRepository : IProductKnowledgeRepository
                 ?? throw new InvalidDataException("Workflow state is null.");
             if (items.Count > 256 || items.Select(item => item.KnowledgeId).Distinct(StringComparer.Ordinal).Count() != items.Count ||
                 items.Any(item => item.Version is null || item.Source is null ||
-                item.Version.Status != item.Status || string.IsNullOrWhiteSpace(item.KnowledgeId) ||
+                item.Version.Status != item.Status || item.CreatedAt == default ||
+                item.UpdatedAt == default || item.Version.CreatedAt == default ||
+                string.IsNullOrWhiteSpace(item.KnowledgeId) ||
                 string.IsNullOrWhiteSpace(item.Version.Version) || string.IsNullOrWhiteSpace(item.Key) ||
                 string.IsNullOrWhiteSpace(item.Category) || string.IsNullOrWhiteSpace(item.Value) ||
                 item.Value.Length > 200 || item.Value.Any(ch => char.IsControl(ch) || ch is '<' or '>' or '{' or '}') ||
                 item.Source.CapturedAt == default || string.IsNullOrWhiteSpace(item.Source.Reference) ||
-                !Enum.IsDefined(item.Source.SourceType) || !item.IsTestData))
+                !Enum.IsDefined(item.Source.SourceType) || !item.IsTestData ||
+                string.IsNullOrWhiteSpace(item.SellerId) || item.SellerId.Length > 64 ||
+                !item.SellerId.All(ch => char.IsAsciiLetterOrDigit(ch) || ch is '-' or '_' or '.') ||
+                string.IsNullOrWhiteSpace(item.ProductId) || item.ProductId.Length > 32 ||
+                !item.ProductId.All(char.IsAsciiDigit)))
                 throw new InvalidDataException("Invalid bounded workflow state.");
-            var matching = items.Where(item => item.SellerId == sellerId && item.ProductId == productId).ToArray();
+            matching = items.Where(item => item.SellerId == sellerId && item.ProductId == productId).ToArray();
             // Explicit workflow mode never falls back to unreviewed legacy facts, even for an empty product.
             published = matching.Where(item => item.Status == KnowledgeStatus.Published &&
                 item.AiUseAllowed && !string.IsNullOrWhiteSpace(item.Version.ApprovedBy) &&
@@ -81,6 +89,11 @@ public sealed class JsonProductKnowledgeRepository : IProductKnowledgeRepository
             if (published.GroupBy(item => item.Key, StringComparer.Ordinal).Any(group => group.Count() > 1))
                 throw new InvalidDataException("More than one published item defines a field.");
         }
+        if (record is null && matching.Length == 0)
+            return Task.FromResult<ProductKnowledgeRecord?>(null);
+        record ??= new ProductKnowledgeRecord(productId, new Dictionary<string, string>(),
+            "LocalTestProductConfig", matching.Max(item => item.UpdatedAt), true, sellerId,
+            matching[^1].Version.Version);
         return Task.FromResult<ProductKnowledgeRecord?>(record with
         {
             Fields = new Dictionary<string, string>(record.Fields, StringComparer.Ordinal),
