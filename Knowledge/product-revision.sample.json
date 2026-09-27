@@ -1,0 +1,14 @@
+{
+  "SellerId": "seller-test",
+  "ProductId": "3000000000010",
+  "Key": "Capacity",
+  "NewValue": "300ml",
+  "Reason": "ManualUpdate",
+  "CandidateVersion": "import-test-v2",
+  "Source": {
+    "SourceType": "ManualInput",
+    "SourceName": "synthetic-revision-fixture",
+    "Reference": "test-fixture:v123",
+    "CapturedAt": "2026-09-27T12:00:00+08:00"
+  }
+}

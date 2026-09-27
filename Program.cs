@@ -32,7 +32,7 @@ if (args.Length == 3 && args[0] == "--ocr-worker")
 }
 
 Console.OutputEncoding = Encoding.UTF8;
-Console.WriteLine("[QN OCR POC V1.22]");
+Console.WriteLine("[QN OCR POC V1.23]");
 Console.WriteLine($"Time: {DateTimeOffset.Now:O}");
 Console.WriteLine($"Runtime: {System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription}");
 var operation = "Capture";
@@ -61,6 +61,13 @@ try
     {
         operation = "Knowledge authoring";
         return KnowledgeAuthoringCommand.Run(args);
+    }
+
+    if (args.Length > 0 && args[0] is "--knowledge-import" or "--knowledge-revision" or
+        "--knowledge-revision-show" or "--knowledge-revision-publish")
+    {
+        operation = "Knowledge import/revision";
+        return KnowledgeImportRevisionCommand.Run(args);
     }
 
     if (args.Length > 0 && args[0] == "--shadow")

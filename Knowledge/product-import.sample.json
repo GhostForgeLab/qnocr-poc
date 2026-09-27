@@ -1,0 +1,8 @@
+{
+  "Name": "合成测试水杯",
+  "Version": "import-test-v1",
+  "IsTestData": true,
+  "Capacity": "200ml",
+  "Material": "TA1纯钛",
+  "Features": "支持刻字"
+}

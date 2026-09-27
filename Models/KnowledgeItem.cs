@@ -20,4 +20,5 @@ public sealed record KnowledgeItem(string KnowledgeId, string SellerId, string P
     DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt, KnowledgeStatus Status,
     KnowledgeVersion Version, bool AiUseAllowed = false,
     string? ReviewedBy = null, DateTimeOffset? ReviewedAt = null,
-    string? RejectionReason = null, bool IsTestData = true);
+    string? RejectionReason = null, bool IsTestData = true,
+    string? SupersededByKnowledgeId = null);

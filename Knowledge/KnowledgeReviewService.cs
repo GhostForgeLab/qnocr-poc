@@ -102,6 +102,39 @@ public sealed class KnowledgeReviewService
         Transition(knowledgeId, KnowledgeStatus.Approved, KnowledgeStatus.Published, actor,
             allowAiUse: allowAiUse);
 
+    /// <summary>Human-triggered atomic switch: retain v1 as published history, activate approved v2.</summary>
+    public KnowledgeItem PublishReplacement(string candidateId, string baseId, string baseVersion, string actor)
+    {
+        Require(candidateId, nameof(candidateId)); Require(baseId, nameof(baseId));
+        Require(baseVersion, nameof(baseVersion)); Require(actor, nameof(actor));
+        lock (_gate)
+        {
+            var items = Read();
+            var oldIndex = items.FindIndex(item => item.KnowledgeId == baseId);
+            var newIndex = items.FindIndex(item => item.KnowledgeId == candidateId);
+            if (oldIndex < 0 || newIndex < 0) throw new KeyNotFoundException("Revision item is missing.");
+            var old = items[oldIndex]; var candidate = items[newIndex];
+            if (old.Status != KnowledgeStatus.Published || !old.AiUseAllowed ||
+                old.Version.Version != baseVersion || candidate.Status != KnowledgeStatus.Approved ||
+                candidate.SellerId != old.SellerId || candidate.ProductId != old.ProductId ||
+                candidate.Key != old.Key || candidate.Version.Version == old.Version.Version ||
+                string.IsNullOrWhiteSpace(candidate.Version.ApprovedBy) ||
+                items.Any(item => item.KnowledgeId != old.KnowledgeId && item.KnowledgeId != candidate.KnowledgeId &&
+                    item.SellerId == old.SellerId && item.ProductId == old.ProductId && item.Key == old.Key &&
+                    item.Status == KnowledgeStatus.Published && item.AiUseAllowed))
+                throw new InvalidOperationException("The approved revision no longer matches the active base version.");
+            var now = DateTimeOffset.UtcNow;
+            var retained = old with { AiUseAllowed = false, UpdatedAt = now,
+                SupersededByKnowledgeId = candidate.KnowledgeId };
+            var active = candidate with { Status = KnowledgeStatus.Published, AiUseAllowed = true,
+                UpdatedAt = now, Version = candidate.Version with { Status = KnowledgeStatus.Published } };
+            items[oldIndex] = retained; items[newIndex] = active;
+            Audit("KNOWLEDGE_SUPERSEDED", retained, actor);
+            Audit("KNOWLEDGE_PUBLISHED", active, actor);
+            Save(items);
+            return active;
+        }
+    }
     public IReadOnlyList<KnowledgeItem> Snapshot()
     {
         lock (_gate) return Read();

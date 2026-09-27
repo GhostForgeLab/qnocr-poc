@@ -49,6 +49,17 @@ public sealed class JsonProductKnowledgeRepository : IProductKnowledgeRepository
         }
     }
 
+    /// <summary>Explicit audit lookup, including superseded published versions; never used by the AI provider.</summary>
+    public async Task<KnowledgeItem?> GetPublishedVersionAsync(string sellerId, string productId,
+        string key, string version, CancellationToken cancellationToken = default)
+    {
+        _ = await GetAsync(sellerId, productId, cancellationToken); // validates the workflow file first
+        if (_workflowItemsPath is null) return null;
+        var items = JsonSerializer.Deserialize<List<KnowledgeItem>>(File.ReadAllText(_workflowItemsPath))
+            ?? throw new InvalidDataException("Workflow state is null.");
+        return items.SingleOrDefault(item => item.SellerId == sellerId && item.ProductId == productId &&
+            item.Key == key && item.Version.Version == version && item.Status == KnowledgeStatus.Published);
+    }
     public Task<ProductKnowledgeRecord?> GetAsync(string sellerId, string productId,
         CancellationToken cancellationToken = default)
     {
