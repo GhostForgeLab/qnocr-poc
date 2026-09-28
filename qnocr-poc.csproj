@@ -19,6 +19,8 @@
     <Compile Remove="KnowledgeConsole/**/*.cs" />
     <Compile Remove="AgentConsole/**/*.cs" />
     <Compile Remove="Integration/**/*.cs" />
+    <Compile Remove="RuntimeObserver/Program.cs" />
+    <Compile Remove="RuntimeObserver/obj/**/*.cs" />
     <None Update="Product/product-profiles.sample.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <PackageReference Include="Sdcb.PaddleOCR" Version="3.3.1" />
     <PackageReference Include="Sdcb.PaddleOCR.Models.Local" Version="3.3.1" />

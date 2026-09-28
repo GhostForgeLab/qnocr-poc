@@ -2,6 +2,9 @@ using System.Drawing;
 using System.Drawing.Imaging;
 using QnocrPoc.Detection;
 
+if (args.Length == 3 && args[0] == "--runtime-observer-child")
+    return await RuntimeObserverChecks.RunChildAsync(args);
+
 if (args.Length == 2 && args[0] == "--product-provider-live-smoke")
     return await ProductProviderLiveSmoke.RunAsync(args[1]);
 
@@ -38,6 +41,14 @@ string Frame(string name, int width = 200, int height = 100, Rectangle? patch = 
     }
     bitmap.Save(path, ImageFormat.Png);
     return path;
+}
+
+if (args.Length == 1 && args[0] == "--runtime-observer-only")
+{
+    await AgentBridgeChecks.RunAsync(Check);
+    await RuntimeObserverChecks.RunAsync(Check);
+    Console.WriteLine($"Passed {passed} Agent Bridge and Runtime Observer checks.");
+    return 0;
 }
 
 if (args.Length == 1 && args[0] == "--assistant-operations-only")
@@ -142,6 +153,7 @@ await ProductContextBindingChecks.RunAsync(Check);
 AgentConsoleChecks.Run(Check);
 await AgentExtensionChecks.RunAsync(Check);
 await AgentBridgeChecks.RunAsync(Check);
+await RuntimeObserverChecks.RunAsync(Check);
 FeedbackRouterChecks.Run(Check);
 await IdentityChecks.RunAsync(Check);
 await ConfirmationChecks.RunAsync(Check);
@@ -149,5 +161,5 @@ await StabilityChecks.RunAsync(Check);
 AssistantChecks.Run(Check);
 AssistantOperationsChecks.Run(Check);
 EvaluationBatchChecks.Run(Check);
-Console.WriteLine($"Passed {passed} checks (V0.4 through V1.32.1). Fixtures: {root}");
+Console.WriteLine($"Passed {passed} checks (V0.4 through V1.32.3-A). Fixtures: {root}");
 return 0;
