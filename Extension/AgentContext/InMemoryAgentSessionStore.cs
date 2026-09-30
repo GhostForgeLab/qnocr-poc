@@ -29,4 +29,9 @@ public sealed class InMemoryAgentSessionStore : IAgentSessionStore
         ArgumentException.ThrowIfNullOrWhiteSpace(sessionId);
         lock (_gate) return _sessions.Remove(sessionId);
     }
+
+    public IReadOnlyList<AgentSession> LoadSessions()
+    {
+        lock (_gate) return Array.AsReadOnly(_sessions.Values.ToArray());
+    }
 }

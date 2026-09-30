@@ -58,6 +58,16 @@ if (args.Length == 1 && args[0] == "--agent-session-only")
     return 0;
 }
 
+if (args.Length == 3 && args[0] == "--agent-session-persistence-child")
+    return AgentSessionPersistenceChecks.RunChild(args[1], args[2]);
+
+if (args.Length == 1 && args[0] == "--agent-session-persistence-only")
+{
+    AgentSessionPersistenceChecks.Run(Check);
+    Console.WriteLine($"Passed {passed} Agent Session persistence checks. Session-only path: AI calls=0; Intent calls=0; Knowledge calls=0; Reply calls=0; SentMessages=0 (no business-service dependencies).");
+    return 0;
+}
+
 if (args.Length == 1 && args[0] == "--agent-session-hardening-only")
 {
     AgentSessionHardeningChecks.Run(Check);
@@ -168,6 +178,7 @@ AgentConsoleChecks.Run(Check);
 await AgentExtensionChecks.RunAsync(Check);
 await AgentSessionChecks.RunAsync(Check);
 AgentSessionHardeningChecks.Run(Check);
+AgentSessionPersistenceChecks.Run(Check);
 await AgentBridgeChecks.RunAsync(Check);
 await RuntimeObserverChecks.RunAsync(Check);
 FeedbackRouterChecks.Run(Check);
@@ -177,5 +188,5 @@ await StabilityChecks.RunAsync(Check);
 AssistantChecks.Run(Check);
 AssistantOperationsChecks.Run(Check);
 EvaluationBatchChecks.Run(Check);
-Console.WriteLine($"Passed {passed} checks (V0.4 through V1.33.0-B). Fixtures: {root}");
+Console.WriteLine($"Passed {passed} checks (V0.4 through V1.33.0-C). Fixtures: {root}");
 return 0;

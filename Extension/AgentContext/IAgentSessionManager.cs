@@ -5,7 +5,7 @@ namespace QnocrPoc.Extension.AgentContext;
 /// <summary>Agent-owned lifecycle only; no qnbot session, AI, intent, knowledge or send dependency.</summary>
 public interface IAgentSessionManager : IDisposable
 {
-    /// <summary>Append with generated local IDs; retries requiring dedupe must use the stable-ID overload.</summary>
+    /// <summary>Append with deterministic Agent IDs derived from observation identity and message fields.</summary>
     AgentSession ProcessMessage(MessageEnvelope envelope);
 
     /// <summary>

@@ -59,11 +59,12 @@ internal static class AgentSessionChecks
             first.Identity.IdentityLevel == IdentityLevel.Observed,
             "Agent identity remains Observed without assuming a trusted buyer");
         var firstMessage = first.Messages.Single();
-        check(Guid.TryParseExact(firstMessage.MessageId, "N", out _) && firstMessage.SessionId == first.SessionId &&
+        check(firstMessage.MessageId.StartsWith("agent:v1:", StringComparison.Ordinal) &&
+            firstMessage.SessionId == first.SessionId &&
             firstMessage.Timestamp == messageAt && firstMessage.Timestamp.Kind == DateTimeKind.Unspecified &&
             firstMessage.Content == envelope.Messages[0].Text && firstMessage.Source == envelope.Source &&
             firstMessage.Role == "buyer",
-            "Agent message records a local ID, session, source, role, original text and timestamp Kind");
+            "Agent message records a stable ID, session, source, role, original text and timestamp Kind");
 
         clock.Advance(TimeSpan.FromMinutes(1));
         var futureMessageAt = messageAt.AddYears(1);
@@ -188,7 +189,10 @@ internal static class AgentSessionChecks
             "forward UTC clock correction does not prematurely expire a session");
         correctionClock.CorrectClock(TimeSpan.FromDays(-2));
         correctionClock.Advance(TimeSpan.FromMinutes(1));
-        var correctionNext = correctionManager.ProcessMessage(envelope);
+        var correctionNext = correctionManager.ProcessMessage(envelope with
+        {
+            Messages = [envelope.Messages[0] with { Timestamp = messageAt.AddSeconds(1) }]
+        });
         check(correctionNext.SessionId == correctionFirst.SessionId &&
             correctionNext.LastActiveTime >= correctionNext.CreatedTime,
             "backward UTC clock correction cannot move LastActiveTime before CreatedTime");
@@ -199,7 +203,10 @@ internal static class AgentSessionChecks
         var concurrentManager = new AgentSessionManager(timeout, new ManualTimeProvider(receivedAt));
         var sessionIds = new string[32];
         Parallel.For(0, sessionIds.Length, index =>
-            sessionIds[index] = concurrentManager.ProcessMessage(envelope).SessionId);
+            sessionIds[index] = concurrentManager.ProcessMessage(envelope with
+            {
+                Messages = [envelope.Messages[0] with { Timestamp = messageAt.AddTicks(index) }]
+            }).SessionId);
         var concurrent = concurrentManager.GetSession(sessionIds[0])!;
         check(sessionIds.Distinct().Count() == 1 && concurrent.Messages.Count == sessionIds.Length &&
             concurrent.Messages.Select(message => message.MessageId).Distinct().Count() == sessionIds.Length,

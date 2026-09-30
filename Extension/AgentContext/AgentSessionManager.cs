@@ -10,6 +10,7 @@ public sealed class AgentSessionManager : IAgentSessionManager
         public AgentSession Snapshot { get; set; } = snapshot;
         public long LastActiveTimestamp { get; set; } = lastActiveTimestamp;
         public long Sequence { get; } = sequence;
+        public TimeSpan RecoveredIdleElapsed { get; set; }
         public HashSet<string> MessageIds { get; } = new(StringComparer.Ordinal);
     }
 
@@ -17,6 +18,7 @@ public sealed class AgentSessionManager : IAgentSessionManager
     private readonly AgentSessionManagerOptions _options;
     private readonly TimeProvider _timeProvider;
     private readonly IAgentSessionStore _store;
+    private readonly IAgentMessageIdentityProvider _messageIdentityProvider;
     private readonly ITimer? _timer;
     private readonly Dictionary<SessionIdentity, SessionEntry> _activeSessions = new();
     private readonly Dictionary<string, SessionEntry> _sessions = new(StringComparer.Ordinal);
@@ -26,7 +28,8 @@ public sealed class AgentSessionManager : IAgentSessionManager
     private Exception? _lastLifecycleError;
 
     public AgentSessionManager(TimeSpan? idleTimeout = null, TimeProvider? timeProvider = null,
-        IAgentSessionStore? store = null, AgentSessionManagerOptions? options = null)
+        IAgentSessionStore? store = null, AgentSessionManagerOptions? options = null,
+        IAgentMessageIdentityProvider? messageIdentityProvider = null)
     {
         _idleTimeout = idleTimeout ?? TimeSpan.FromMinutes(30);
         if (_idleTimeout <= TimeSpan.Zero)
@@ -40,6 +43,8 @@ public sealed class AgentSessionManager : IAgentSessionManager
             throw new ArgumentOutOfRangeException(nameof(options), "Limits and durations must be positive; timer interval must be 1..4294967294 ms.");
         _timeProvider = timeProvider ?? TimeProvider.System;
         _store = store ?? new InMemoryAgentSessionStore();
+        _messageIdentityProvider = messageIdentityProvider ?? new AgentMessageIdentityProvider();
+        RestoreSessions();
         if (_options.LifecycleSweepInterval is { } sweepInterval)
             _timer = _timeProvider.CreateTimer(_ => ScheduledSweep(), null, sweepInterval, sweepInterval);
     }
@@ -47,7 +52,7 @@ public sealed class AgentSessionManager : IAgentSessionManager
     /// <summary>Last scheduler failure, cleared by the next successful scheduled sweep.</summary>
     public Exception? LastLifecycleError { get { lock (_gate) return _lastLifecycleError; } }
 
-    // The v1 envelope has no message IDs. Keep legacy ingestion semantics; retries need stable IDs.
+    // Identity resolution is Agent-owned; the v1 envelope and Adapter stay unchanged.
     public AgentSession ProcessMessage(MessageEnvelope envelope) => ProcessMessageCore(envelope, null);
 
     public AgentSession ProcessMessage(MessageEnvelope envelope, IReadOnlyList<string> messageIds)
@@ -70,11 +75,12 @@ public sealed class AgentSessionManager : IAgentSessionManager
             string.IsNullOrWhiteSpace(message.Role) || string.IsNullOrWhiteSpace(message.Text) ||
             message.Timestamp == default))
             throw new ArgumentException("At least one complete message is required.", nameof(envelope));
-        var ids = messageIds?.ToArray() ?? messages.Select(_ => Guid.NewGuid().ToString("N")).ToArray();
+        var identity = new SessionIdentity(envelope.Source, envelope.SellerId, envelope.BuyerId);
+        var ids = messageIds?.ToArray() ?? messages.Select(message =>
+            _messageIdentityProvider.GetMessageId(identity, message)).ToArray();
         if (ids.Length != messages.Length || ids.Any(string.IsNullOrWhiteSpace))
             throw new ArgumentException("One nonblank ID per message is required.", nameof(messageIds));
 
-        var identity = new SessionIdentity(envelope.Source, envelope.SellerId, envelope.BuyerId);
         lock (_gate)
         {
             ThrowIfDisposed();
@@ -111,6 +117,7 @@ public sealed class AgentSessionManager : IAgentSessionManager
             _store.SaveSession(next);
             state.Snapshot = next;
             state.LastActiveTimestamp = timestamp;
+            state.RecoveredIdleElapsed = TimeSpan.Zero;
             foreach (var index in newIndices) state.MessageIds.Add(ids[index]);
             _activeSessions[identity] = state;
             _sessions[next.SessionId] = state;
@@ -155,7 +162,7 @@ public sealed class AgentSessionManager : IAgentSessionManager
         foreach (var state in _sessions.Values)
         {
             if (state.Snapshot.Status == AgentSessionStatus.Archived) continue;
-            var elapsed = _timeProvider.GetElapsedTime(state.LastActiveTimestamp, timestamp);
+            var elapsed = IdleElapsed(state, timestamp);
             if (elapsed < _idleTimeout) continue;
             var next = state.Snapshot;
             if (next.Status == AgentSessionStatus.Active)
@@ -185,12 +192,50 @@ public sealed class AgentSessionManager : IAgentSessionManager
     private void MakeRoom()
     {
         if (_sessions.Count < _options.MaxSessions) return;
+        var timestamp = _timeProvider.GetTimestamp();
         var victim = _sessions.Values.Where(state => state.Snapshot.Status != AgentSessionStatus.Active)
-            .OrderBy(state => state.LastActiveTimestamp).ThenBy(state => state.Sequence).FirstOrDefault();
+            .OrderByDescending(state => IdleElapsed(state, timestamp))
+            .ThenBy(state => state.Sequence).FirstOrDefault();
         if (victim is null)
             throw new AgentSessionCapacityException("Session limit reached; all retained sessions are Active.");
         _store.DeleteSession(victim.Snapshot.SessionId);
         _sessions.Remove(victim.Snapshot.SessionId);
+    }
+
+    private void RestoreSessions()
+    {
+        // Validate every snapshot and capacity before any startup lifecycle writes.
+        var snapshots = _store.LoadSessions().Select(AgentSessionPersistenceModel.Snapshot)
+            .OrderBy(session => session.CreatedTime).ThenBy(session => session.SessionId, StringComparer.Ordinal).ToArray();
+        if (snapshots.Length > _options.MaxSessions ||
+            snapshots.Any(session => session.Messages.Count > _options.MaxMessagesPerSession))
+            throw new AgentSessionCapacityException("Persisted history exceeds configured capacity; startup refused without deleting data.");
+        if (snapshots.Select(session => session.SessionId).Distinct(StringComparer.Ordinal).Count() != snapshots.Length ||
+            snapshots.Where(session => session.Status == AgentSessionStatus.Active)
+                .GroupBy(session => session.Identity).Any(group => group.Count() > 1))
+            throw new InvalidDataException("Persisted sessions contain duplicate IDs or Active observation identities.");
+        var timestamp = _timeProvider.GetTimestamp();
+        var now = _timeProvider.GetUtcNow();
+        foreach (var snapshot in snapshots)
+        {
+            var state = new SessionEntry(snapshot, timestamp, ++_sequence)
+            {
+                // A clock moving backwards during shutdown cannot produce negative idle duration.
+                RecoveredIdleElapsed = now > snapshot.LastActiveTime ? now - snapshot.LastActiveTime : TimeSpan.Zero
+            };
+            foreach (var message in snapshot.Messages) state.MessageIds.Add(message.MessageId);
+            _sessions.Add(snapshot.SessionId, state);
+            if (snapshot.Status == AgentSessionStatus.Active) _activeSessions.Add(snapshot.Identity, state);
+        }
+        // Downtime counts toward idle/retention; subsequently use process-local monotonic time.
+        SweepAt(timestamp, now);
+    }
+
+    private TimeSpan IdleElapsed(SessionEntry state, long timestamp)
+    {
+        var monotonic = _timeProvider.GetElapsedTime(state.LastActiveTimestamp, timestamp);
+        return monotonic > TimeSpan.MaxValue - state.RecoveredIdleElapsed
+            ? TimeSpan.MaxValue : state.RecoveredIdleElapsed + monotonic;
     }
 
     private void ScheduledSweep()

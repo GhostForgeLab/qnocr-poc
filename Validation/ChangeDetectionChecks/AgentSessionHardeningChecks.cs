@@ -45,6 +45,7 @@ internal static class AgentSessionHardeningChecks
             SessionIds.Add(session.SessionId);
         }
         public AgentSession? GetSession(string sessionId) => _inner.GetSession(sessionId);
+        public IReadOnlyList<AgentSession> LoadSessions() => _inner.LoadSessions();
         public bool DeleteSession(string sessionId)
         {
             DeleteCalls++;
