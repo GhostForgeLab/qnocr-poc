@@ -14,5 +14,6 @@
     <Using Include="System.IO" />
     <ProjectReference Include="../../qnocr-poc.csproj" />
     <Compile Include="../AgentSessionPersistenceChecks.cs" Link="AgentSessionPersistenceChecks.cs" />
+    <Compile Include="../RealMessageContextChecks.cs" Link="RealMessageContextChecks.cs" />
   </ItemGroup>
 </Project>

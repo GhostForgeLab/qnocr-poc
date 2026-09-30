@@ -43,6 +43,23 @@ string Frame(string name, int width = 200, int height = 100, Rectangle? patch = 
     return path;
 }
 
+if (args.Length == 3 && args[0] == "--real-message-context-child")
+    return RealMessageContextChecks.RunChild(args[1], args[2]);
+
+if (args.Length == 2 && args[0] == "--real-message-context-evidence")
+{
+    await RealMessageContextChecks.RunEvidenceAsync(args[1], Check);
+    Console.WriteLine($"Passed {passed} live Real Message Context evidence checks.");
+    return 0;
+}
+
+if (args.Length == 1 && args[0] == "--real-message-context-only")
+{
+    await RealMessageContextChecks.RunAsync(Check);
+    Console.WriteLine($"Passed {passed} Real Message Context integration checks. AI/Intent/Knowledge/Reply/SentMessages=0.");
+    return 0;
+}
+
 if (args.Length == 1 && args[0] == "--runtime-observer-only")
 {
     await AgentBridgeChecks.RunAsync(Check);
@@ -179,6 +196,7 @@ await AgentExtensionChecks.RunAsync(Check);
 await AgentSessionChecks.RunAsync(Check);
 AgentSessionHardeningChecks.Run(Check);
 AgentSessionPersistenceChecks.Run(Check);
+await RealMessageContextChecks.RunAsync(Check);
 await AgentBridgeChecks.RunAsync(Check);
 await RuntimeObserverChecks.RunAsync(Check);
 FeedbackRouterChecks.Run(Check);
@@ -188,5 +206,5 @@ await StabilityChecks.RunAsync(Check);
 AssistantChecks.Run(Check);
 AssistantOperationsChecks.Run(Check);
 EvaluationBatchChecks.Run(Check);
-Console.WriteLine($"Passed {passed} checks (V0.4 through V1.33.0-C). Fixtures: {root}");
+Console.WriteLine($"Passed {passed} checks (V0.4 through V1.34.0-A). Fixtures: {root}");
 return 0;

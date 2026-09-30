@@ -40,6 +40,12 @@ var operation = "Capture";
 
 try
 {
+    if (args.Length > 0 && args[0] == "--agent-context-capture")
+    {
+        operation = "Agent Context capture (Shadow only)";
+        return await QnocrPoc.Extension.AgentContext.AgentContextCaptureCommand.RunAsync(args);
+    }
+
     if (args.Length > 0 && args[0].StartsWith("--assist-batch-", StringComparison.Ordinal))
     {
         operation = "Evaluation batch";
