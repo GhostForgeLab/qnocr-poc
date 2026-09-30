@@ -53,6 +53,12 @@ if (args.Length == 2 && args[0] == "--real-message-context-evidence")
     return 0;
 }
 
+if (args.Length == 1 && args[0] == "--identity-normalization-only")
+{
+    await IdentityNormalizationChecks.RunAsync(Check);
+    Console.WriteLine($"Passed {passed} Identity Normalization and Multi Buyer Isolation checks. AI/Intent/Knowledge/Reply/SentMessages=0.");
+    return 0;
+}
 if (args.Length == 1 && args[0] == "--real-message-context-only")
 {
     await RealMessageContextChecks.RunAsync(Check);
@@ -197,6 +203,7 @@ await AgentSessionChecks.RunAsync(Check);
 AgentSessionHardeningChecks.Run(Check);
 AgentSessionPersistenceChecks.Run(Check);
 await RealMessageContextChecks.RunAsync(Check);
+await IdentityNormalizationChecks.RunAsync(Check);
 await AgentBridgeChecks.RunAsync(Check);
 await RuntimeObserverChecks.RunAsync(Check);
 FeedbackRouterChecks.Run(Check);
@@ -206,5 +213,5 @@ await StabilityChecks.RunAsync(Check);
 AssistantChecks.Run(Check);
 AssistantOperationsChecks.Run(Check);
 EvaluationBatchChecks.Run(Check);
-Console.WriteLine($"Passed {passed} checks (V0.4 through V1.34.0-A). Fixtures: {root}");
+Console.WriteLine($"Passed {passed} checks (V0.4 through V1.34.0-B). Fixtures: {root}");
 return 0;

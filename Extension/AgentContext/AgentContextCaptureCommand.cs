@@ -33,6 +33,8 @@ public static class AgentContextCaptureCommand
             !values.TryGetValue("--frames", out var frameText) || !int.TryParse(frameText, out var frames) || frames is < 1 or > 600 ||
             !values.TryGetValue("--interval-ms", out var intervalText) || !int.TryParse(intervalText, out var interval) || interval is < 1000 or > 60000)
         { Console.Error.WriteLine(usage); return 2; }
+        var normalizer = new IdentityNormalizer();
+        var normalizedExpectedBuyerLabel = normalizer.Normalize(expectedBuyerLabel);
         output = Path.GetFullPath(output);
         if (Directory.Exists(output) || File.Exists(output))
             throw new IOException("Use a new output directory to keep capture evidence separate.");
@@ -47,8 +49,9 @@ public static class AgentContextCaptureCommand
         var startedAt = DateTimeOffset.UtcNow;
         Write(Path.Combine(output, "session.json"), new
         {
-            Version = "1.34.0-A", Mode = "ShadowContextOnly", StartedAt = startedAt,
+            Version = "1.34.0-B", Mode = "ShadowContextOnly", StartedAt = startedAt,
             DatabasePath = pipeline.DatabasePath, TestPrefix = prefix, ExpectedBuyerLabel = expectedBuyerLabel, SellerId = sellerId,
+            NormalizedExpectedBuyerLabel = normalizedExpectedBuyerLabel,
             WindowHandle = handle, WindowTitle = window.WindowTitle,
             IdentityLevel = "Observed", frames, interval,
             AiCalls = 0, IntentCalls = 0, KnowledgeCalls = 0, SendEnabled = false, SentMessages = 0
@@ -101,12 +104,21 @@ public static class AgentContextCaptureCommand
                             batch.Evidence.Single(e => e.MessageIndex == index) with { MessageIndex = ordinal }).ToArray()
                     };
                     var buyerLabel = SessionRegistry.ReadBuyer(selected, ocr);
-                    if (indices.Length > 0 && buyerLabel == expectedBuyerLabel)
+                    string? normalizedBuyerLabel = null;
+                    if (buyerLabel is not null)
                     {
+                        try { normalizedBuyerLabel = normalizer.Normalize(buyerLabel); }
+                        catch (ArgumentException) { /* Invalid/empty OCR candidates remain Held. */ }
+                    }
+                    if (indices.Length > 0 && normalizedBuyerLabel == normalizedExpectedBuyerLabel)
+                    {
+                        // Normalize before the existing observation hash; a hash cannot repair label aliases.
+                        var buyerId = ObservedId("buyer", normalizedBuyerLabel);
                         Write(Path.Combine(slot, "identity.json"), new { SellerId = sellerId,
-                            BuyerId = ObservedId("buyer", buyerLabel), BuyerLabel = buyerLabel, IdentityLevel = "Observed" });
+                            BuyerId = buyerId, BuyerLabel = buyerLabel, NormalizedBuyerLabel = normalizedBuyerLabel,
+                            IdentityLevel = "Observed" });
                         IMessageSource source = new OcrMessageSource(_ => Task.FromResult(selected),
-                            sellerId, ObservedId("buyer", buyerLabel));
+                            sellerId, buyerId);
                         await foreach (var envelope in source.ReadAsync(cancellationToken))
                         {
                             var number = ++envelopes;

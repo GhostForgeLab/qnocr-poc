@@ -8,17 +8,29 @@ namespace QnocrPoc.Extension.AgentContext;
 public sealed class AgentContextPipeline : IDisposable
 {
     private readonly IAgentSessionManager _manager;
+    private readonly IIdentityNormalizer _identityNormalizer;
 
     public AgentContextPipeline(string databasePath, TimeProvider? timeProvider = null,
-        TimeSpan? idleTimeout = null, AgentSessionManagerOptions? options = null)
+        TimeSpan? idleTimeout = null, AgentSessionManagerOptions? options = null,
+        IIdentityNormalizer? identityNormalizer = null)
     {
+        _identityNormalizer = identityNormalizer ?? new IdentityNormalizer();
         var store = new SQLiteAgentSessionStore(databasePath);
         DatabasePath = store.DatabasePath;
         _manager = new AgentSessionManager(idleTimeout, timeProvider, store, options);
     }
 
     public string DatabasePath { get; }
-    public AgentSession ProcessMessage(MessageEnvelope envelope) => _manager.ProcessMessage(envelope);
+    public AgentSession ProcessMessage(MessageEnvelope envelope)
+    {
+        ArgumentNullException.ThrowIfNull(envelope);
+        // This boundary accepts Observed candidates, not verified/native buyer IDs.
+        // Use the same normalized key for message fingerprinting and Session lookup.
+        return _manager.ProcessMessage(envelope with
+        {
+            BuyerId = _identityNormalizer.Normalize(envelope.BuyerId)
+        });
+    }
     public AgentSession? GetSession(string sessionId) => _manager.GetSession(sessionId);
 
     public async IAsyncEnumerable<AgentSession> ReadAsync(IMessageSource source,
