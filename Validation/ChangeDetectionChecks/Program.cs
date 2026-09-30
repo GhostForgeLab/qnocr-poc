@@ -58,6 +58,13 @@ if (args.Length == 1 && args[0] == "--agent-session-only")
     return 0;
 }
 
+if (args.Length == 1 && args[0] == "--agent-session-hardening-only")
+{
+    AgentSessionHardeningChecks.Run(Check);
+    Console.WriteLine($"Passed {passed} Agent Session hardening checks. Session-only path: AI calls=0; Intent calls=0; Knowledge calls=0; SentMessages=0 (no business-service dependencies).");
+    return 0;
+}
+
 if (args.Length == 1 && args[0] == "--assistant-operations-only")
 {
     AssistantOperationsChecks.Run(Check);
@@ -160,6 +167,7 @@ await ProductContextBindingChecks.RunAsync(Check);
 AgentConsoleChecks.Run(Check);
 await AgentExtensionChecks.RunAsync(Check);
 await AgentSessionChecks.RunAsync(Check);
+AgentSessionHardeningChecks.Run(Check);
 await AgentBridgeChecks.RunAsync(Check);
 await RuntimeObserverChecks.RunAsync(Check);
 FeedbackRouterChecks.Run(Check);
@@ -169,5 +177,5 @@ await StabilityChecks.RunAsync(Check);
 AssistantChecks.Run(Check);
 AssistantOperationsChecks.Run(Check);
 EvaluationBatchChecks.Run(Check);
-Console.WriteLine($"Passed {passed} checks (V0.4 through V1.33.0-A). Fixtures: {root}");
+Console.WriteLine($"Passed {passed} checks (V0.4 through V1.33.0-B). Fixtures: {root}");
 return 0;
