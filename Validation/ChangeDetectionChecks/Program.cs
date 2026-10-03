@@ -46,6 +46,33 @@ string Frame(string name, int width = 200, int height = 100, Rectangle? patch = 
 if (args.Length == 3 && args[0] == "--real-message-context-child")
     return RealMessageContextChecks.RunChild(args[1], args[2]);
 
+if (args.Length == 3 && args[0] == "--real-single-buyer-resume")
+    return await RealMultiBuyerContextChecks.ResumeSingleAsync(args[1], args[2]);
+
+if (args.Length == 4 && args[0] == "--real-single-buyer-capture")
+    return await RealMultiBuyerContextChecks.CaptureAsync("", args[1], args[2], single: true, planPath: args[3]);
+
+if (args.Length == 3 && args[0] == "--real-single-buyer-capture")
+    return await RealMultiBuyerContextChecks.CaptureAsync("", args[1], args[2], single: true);
+
+if (args.Length == 2 && args[0] == "--real-single-buyer-evidence")
+{
+    await RealMultiBuyerContextChecks.EvidenceAsync(args[1], Check, single: true);
+    Console.WriteLine($"Passed {passed} live Single Buyer Context evidence checks. MultiBuyerReal=Pending.");
+    return 0;
+}
+if (args.Length == 1 && args[0] == "--real-single-buyer-only")
+{
+    await RealMultiBuyerContextChecks.RunSingleAsync(Check);
+    Console.WriteLine($"Passed {passed} Single Buyer acceptance host checks (synthetic only).");
+    return 0;
+}
+if (args.Length > 0 && args[0].StartsWith("--real-single-buyer", StringComparison.Ordinal))
+{
+    Console.Error.WriteLine("Usage: --real-single-buyer-only | --real-single-buyer-capture NEW_OUTPUT NUMERIC_PREFIX [MESSAGES_JSON] | --real-single-buyer-evidence OUTPUT | --real-single-buyer-resume INCOMPLETE_OUTPUT REAL_CAPTURE_FRAME");
+    return 2;
+}
+
 if (args.Length == 4 && args[0] == "--real-multi-buyer-capture")
     return await RealMultiBuyerContextChecks.CaptureAsync(args[1], args[2], args[3]);
 
@@ -227,6 +254,7 @@ AgentSessionPersistenceChecks.Run(Check);
 await RealMessageContextChecks.RunAsync(Check);
 await IdentityNormalizationChecks.RunAsync(Check);
 await RealMultiBuyerContextChecks.RunAsync(Check);
+await RealMultiBuyerContextChecks.RunSingleAsync(Check);
 await AgentBridgeChecks.RunAsync(Check);
 await RuntimeObserverChecks.RunAsync(Check);
 FeedbackRouterChecks.Run(Check);

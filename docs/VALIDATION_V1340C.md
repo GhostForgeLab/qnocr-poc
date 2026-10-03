@@ -1,27 +1,42 @@
-# V1.34.0-C Real Multi-Buyer Context 验收入口与回归
+# V1.34.0-C 真实 Context 验收：单买家 / 多买家待补
 
 日期：2026-10-03（Asia/Shanghai）。基线：669688573003e7fbe9ade9e17c19c23aff9bdc4b。
 
 ## 判定
 
-真实验收尚待完成。已准备同一 Context 组件内的双买家实时采集入口。合成检查、截图预检与历史 V1.34.0-A 证据不能作为本阶段通过的依据。
+**单买家真实验收通过 / 多买家真实验收待补。**
+
+本轮单买家真实证据审计 40/40、最终 1 Session / 3 Message，完成连续消息、OCR 身份稳定、重放、SQLite、组件重建、恢复去重和新消息追加。采集超时后，第三条通过保存的真实 OCR Envelope 恢复原测试库后追加；原始未完成/拒绝记录保留，详见 REAL_SINGLE_BUYER_ACCEPTANCE_V1340C.md。
+
+用户于 2026-10-03 调整范围：当前只有一个可控真实账号，多买家真实 A/B 隔离继续 Pending，不阻塞后续 Agent Context → JEV Intent 集成评审。V1.34.0-B 的 90/90 合成标准化/隔离检查保留为代码级证据，不替代真实双买家验收。
 
 保持 Context-only / Shadow / Observed / No Send。业务代码修改数为 0；既有 SQLite schema、MessageEnvelope、Adapter、qnbot Core 与 AI/Send Pipeline 均未修改。
 
-## 修改文件
+## V1.34.0-C 累计文件
+
+本次改动为六个文件：验证宿主、入口、脚本、两份已有记录和新单买家记录。csproj 链接已在 f9af7df 中提交，本次未修改。
 
 | 文件 | 作用 |
 | --- | --- |
 | Validation/RealMultiBuyerContextChecks.cs | 同一 Pipeline 的真实 A/B/A 采集、原 Envelope 重放、受控昵称别名回放、组件重建、恢复后 A/B 追加、证据审计与合成入口检查。 |
 | Validation/ChangeDetectionChecks/ChangeDetectionChecks.csproj | 链接验证文件；不编入业务主项目。 |
-| Validation/ChangeDetectionChecks/Program.cs | 三个独立验收入口、参数失败处理与全量回归注册。 |
+| Validation/ChangeDetectionChecks/Program.cs | 单买家/多买家独立入口、原库真实证据恢复入口、参数失败处理与全量回归注册。 |
 | Validation/Run-RealMultiBuyerV1340C.ps1 | 独立新库启动脚本；采集和证据核对都成功才报告通过。 |
 | docs/VALIDATION_V1340C.md | 验证范围、命令、回归与边界。 |
-| docs/REAL_MULTI_BUYER_ACCEPTANCE_V1340C.md | 脱敏真实验收记录。 |
+| docs/REAL_MULTI_BUYER_ACCEPTANCE_V1340C.md | 多买家真实验收 Pending 记录。 |
+| docs/REAL_SINGLE_BUYER_ACCEPTANCE_V1340C.md | 本轮单买家真实验收、失败尝试和恢复证据记录。 |
 
 原有两份未跟踪 V1.32.2 文档保持原状，不属于本次修改。业务修改原因/影响/风险/回滚不适用。验证代码和文档可通过独立提交回滚。本地 Output/ValidationV1340C/ 证据保留，不将含昵称/截图的输出加入 Git。
 
-## 验收流程
+## 本轮单买家流程
+
+使用 -SingleBuyer；身份只从本轮带标记真实买家消息的 OCR 标题读取，按原 Normalizer/Observed Hash 绑定，不需要造一个 Buyer B 或手工提供昵称。先采集两条不同消息，重放/受控别名回放、关闭并重建 Context 组件，再从同一买家发送第三条新消息。预期最终 1 Session / 3 Message。采集入口和审计入口明确标识 SingleBuyerReal / MultiBuyerReal=Pending；单买家证据不能由多买家审计入口判通过。
+
+单买家每阶段最多等待 15 分钟，多买家保持 4 分钟。另提供 --real-single-buyer-resume INCOMPLETE_OUTPUT REAL_CAPTURE_FRAME，在原测试库中恢复并处理已捕获的真实消息，原 Incomplete 状态/收据/Hash/数据库归档保留；原业务 30 分钟 idle timeout 不变。
+
+可提供显式本地消息计划来记录实际受控实发文本；该计划只约束验收，不改 OCR、Envelope 正文、MessageId 或业务身份规则。原始失败尝试保留。
+
+## 保留的双买家验收流程（待补）
 
 1. 操作者确认两个不同受控测试账号，将其千牛显示昵称保存在 Git 忽略目录 Output/ValidationV1340C/buyers.local.json，字段为 BuyerA、BuyerB。报告只使用 A/B。
 2. 只允许一个可见、未最小化、未 cloaked 的接待中心窗口；每帧重核 HWND/PID/店铺标题。此入口不点击 UI 或发送消息。
@@ -46,6 +61,8 @@
 $env:DOTNET_CLI_HOME = Join-Path $PWD '.tools/cli-home'
 & ./.tools/dotnet/dotnet.exe build qnocr-poc.csproj --no-restore -t:Rebuild -v q
 & ./.tools/dotnet/dotnet.exe build Validation/ChangeDetectionChecks/ChangeDetectionChecks.csproj --no-restore -t:Rebuild -v q -p:BuildProjectReferences=false
+& ./Validation/Run-RealMultiBuyerV1340C.ps1 -SingleBuyer
+# 补做双买家时：
 & ./Validation/Run-RealMultiBuyerV1340C.ps1 -BuyersPath ./Output/ValidationV1340C/buyers.local.json
 ~~~
 
@@ -53,6 +70,10 @@ $env:DOTNET_CLI_HOME = Join-Path $PWD '.tools/cli-home'
 
 ~~~powershell
 $checks = './Validation/ChangeDetectionChecks/bin/Debug/net8.0-windows/win-x64/ChangeDetectionChecks.exe'
+& $checks --real-single-buyer-only
+& $checks --real-single-buyer-evidence <本轮单买家真实目录>
+# 采集窗口到期后，可将保存的真实输入恢复到原专用测试库：
+& $checks --real-single-buyer-resume <原Incomplete目录> <真实采集Frame目录>
 & $checks --real-multi-buyer-only
 & $checks --real-multi-buyer-evidence <本轮真实目录>
 & $checks --real-message-context-only
@@ -70,20 +91,22 @@ $checks = './Validation/ChangeDetectionChecks/bin/Debug/net8.0-windows/win-x64/C
 | 主项目 .NET 8 Rebuild | 0 Warning / 0 Error |
 | 验证项目 .NET 8 Rebuild | 0 Warning / 0 Error |
 | RuntimeObserver .NET 8 Rebuild | 0 Warning / 0 Error |
-| 新增入口检查 | 25/25，明确为合成输入 |
+| 新增多买家入口检查 | 25/25，合成输入 |
+| 新增单买家入口检查 | 11/11，合成输入，包含实际文本计划保护与原库恢复 |
 | 原 Context 集成 | 24/24 |
 | 原 Identity Normalization | 90/90 |
-| 全量回归 | 949/949 = 原 924 + 新增 25 |
+| 全量回归 | 960/960 = 原 924 + 多买家入口 25 + 单买家入口 11 |
 | qnbot 兼容 | 17/17；ForbiddenBusinessCalls=0；六份上游源文件字节不变 |
 | 实时截图预检 | PrintWindow 成功；像素检查通过，不等同于 Context 验收 |
 | 无效新命令参数 | 返回 2，不进入实时采集 |
-| 双买家真实 Context 证据 | 待执行 |
+| 单买家真实 Context 证据 | 40/40；1 Session / 3 Message |
+| 双买家真实 Context 证据 | Pending；不以单买家或合成证据替代 |
 
 兼容 .NET Framework 4.8 宿主保留既有上游 CS4014 警告 1 条（BuyerMessageBurstCoordinator.cs:744），0 Error；未修改上游或屏蔽警告。
 
 新增检查覆盖五阶段 2/2/3/4/3 协议、时间前进后的重放、完整恢复与各自追加、受控别名、错误买家/文本在写入前拒绝、昵称碰撞在建库前拒绝、禁止已有库复用、时间 OCR 漂移产生重复时停止且保留证据、Incomplete 不能通过。未运行 provider-live-smoke 或真实业务 AI。
 
-日志保留在 Output/ValidationV1340C/。兼容原始产物：Output/Integration/run_20261003_204351_419/。
+日志保留在 Output/ValidationV1340C/。本轮兼容原始产物：Output/Integration/run_20261003_220811_491/。
 
 ## 安全与限制
 
@@ -91,4 +114,4 @@ Context 验收路径 AI / Intent / Knowledge / Reply / SentMessages 为 0。依�
 
 昵称仍仅为 Observed 候选，不证明平台 Buyer ID。两个账号标签若经原规则相同必须停止，不能升级 Verified 或扩大规则。正文/时间 OCR 波动仍可能改变 MessageId，新入口保留失败证据。组件重建不等于千牛/qnbot 进程重启、多进程写入或生产容量验收。
 
-只有真实七条消息、两位买家、五阶段、重放、恢复后追加及原回归全部通过，才可评审将基础 Context 链判为稳定。后续单独评审 JEV Intent / Knowledge / AI Reply Preview，不在本任务中启用。
+单买家真实链路与回归全部通过后，单买家路径可作为后续 Agent Context → JEV Intent 集成依据；真实多买家隔离继续 Pending 并补做，不将此缺口作为后续集成的阻塞项。不宣称已完成多买家真实稳定性或 Verified Buyer。本任务仍不启用 JEV、Knowledge、AI Reply 或发送。

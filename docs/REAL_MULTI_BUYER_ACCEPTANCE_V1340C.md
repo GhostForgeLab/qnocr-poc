@@ -1,37 +1,21 @@
-# V1.34.0-C 真实双买家验收记录
+# V1.34.0-C 真实多买家隔离验收记录
 
 日期：2026-10-03（Asia/Shanghai）。
 
-## 当前判定
+**Pending：当前仅有一个可控真实买家账号，尚未完成真实双买家 A/B 隔离。**
 
-**Pending：真实双买家闭环尚未通过验收。**
+用户已调整本阶段范围：先完成真实单买家 Context 验收，结果记录在 REAL_SINGLE_BUYER_ACCEPTANCE_V1340C.md。单买家真实链路已通过（40/40，1 Session / 3 Message），真实多买家 Pending 不阻塞后续 Agent Context → JEV Intent 集成评审。
 
-操作者已表示两个受控测试买家准备好。接待中心窗口可见，现有 PrintWindow 预检成功。测试角色与本地昵称配置待确认；不能将窗口会话列表或截图成功视为两位真实买家已进入 Context 的证明。
-
-真实昵称、店铺标题、订单与聊天截图仅保留在本地 Git 忽略的 Output/ValidationV1340C/，此文档不记录其原值。
-
-## 结果清单
-
-| 验收项 | 当前证据/结果 |
+| 范围 | 证据与判定 |
 | --- | --- |
-| Buyer A 连续 A1/A2 | 待真实采集 |
-| Buyer B 连续 B1/B2 | 待真实采集 |
-| A → B → A / A3 | 待真实采集 |
-| Stable Identity | 合成入口检查通过；真实结果待采集 |
-| Session 隔离 | 合成 2 Session / 7 Message 通过；不是本阶段真实证据 |
-| OCR 原值 / Normalized | 新入口保存；尚未观察自然波动 |
-| 原真实 Envelope 重放 | 待真实采集后执行 |
-| SQLite 持久化 | 独立库入口已准备；真实库待创建 |
-| Context 组件重建恢复 | 合成检查通过；真实结果待采集 |
-| 恢复后 A/B 追加 | 合成检查通过；真实结果待采集 |
-| Identity Observed | 已执行 Context 检查始终 Observed |
-| AI / Intent / Knowledge / Reply / SentMessages | 已执行 Context 验证路径 0 / 0 / 0 / 0 / 0 |
-| 原回归 | 参见 VALIDATION_V1340C.md 与最终本地日志 |
-| 真实验收数据库 / Hash 清单 | 尚未产生 |
-| 真实证据审计 | 尚未执行 |
+| V1.34.0-B 合成多买家隔离 | 已完成；commit 669688573003e7fbe9ade9e17c19c23aff9bdc4b；90/90 标准化/隔离检查，2 Session / 4 Message、别名重放和恢复后重放均隔离。仅为代码级证据。 |
+| V1.34.0-C 双买家验收入口 | 保留；25/25 合成入口检查。 |
+| 两位真实买家进入 Context | Pending |
+| 真实 A/B 独立 Session / 历史隔离 | Pending |
+| 真实 A → B → A 切换 | Pending |
+| 双买家真实重放、恢复、各自追加 | Pending |
+| 将单买家结果替代双买家证明 | 不允许；两个审计入口分别检查 EvidenceKind。 |
 
-## 失败与决策
+本轮不创建模拟 Buyer B 来完成真实验收，不扩大昵称规则，不自动合并身份。身份继续 Observed。以后获得第二个受控账号，使用保留的双买家入口和新的独立库补做 7 条消息 / 2 Session 完整协议。缺口保留在此记录，不能静默删除或改为 Passed。
 
-目前没有捕获到真实双买家缺陷，也不能据此判定真实链路稳定。业务代码修改数为 0；不开展 schema 迁移、身份自动合并、AI 或发送集成。
-
-下一步确认受控测试角色，使用新库完成 A1/A2 → B1/B2 → A3 → 重放/重建 → A4 → B3，并独立审计证据。真实异常立即保留原始证据，按最小原因分析。只有全部通过才可启动下一阶段集成评审。
+真实昵称、店铺标题、聊天截图和完整 OCR 只保存在本地 Git 忽略的 Output/ValidationV1340C/，报告使用脱敏标签。
