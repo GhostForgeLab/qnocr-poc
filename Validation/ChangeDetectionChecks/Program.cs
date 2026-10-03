@@ -46,6 +46,28 @@ string Frame(string name, int width = 200, int height = 100, Rectangle? patch = 
 if (args.Length == 3 && args[0] == "--real-message-context-child")
     return RealMessageContextChecks.RunChild(args[1], args[2]);
 
+if (args.Length == 4 && args[0] == "--real-multi-buyer-capture")
+    return await RealMultiBuyerContextChecks.CaptureAsync(args[1], args[2], args[3]);
+
+if (args.Length == 2 && args[0] == "--real-multi-buyer-evidence")
+{
+    await RealMultiBuyerContextChecks.EvidenceAsync(args[1], Check);
+    Console.WriteLine($"Passed {passed} live Multi Buyer Context evidence checks.");
+    return 0;
+}
+if (args.Length == 1 && args[0] == "--real-multi-buyer-only")
+{
+    await RealMultiBuyerContextChecks.RunAsync(Check);
+    Console.WriteLine($"Passed {passed} Multi Buyer acceptance host checks (synthetic only). AI/Intent/Knowledge/Reply/SentMessages=0.");
+    return 0;
+}
+
+if (args.Length > 0 && args[0].StartsWith("--real-multi-buyer", StringComparison.Ordinal))
+{
+    Console.Error.WriteLine("Usage: --real-multi-buyer-only | --real-multi-buyer-capture BUYERS_JSON NEW_OUTPUT NUMERIC_PREFIX | --real-multi-buyer-evidence OUTPUT");
+    return 2;
+}
+
 if (args.Length == 2 && args[0] == "--real-message-context-evidence")
 {
     await RealMessageContextChecks.RunEvidenceAsync(args[1], Check);
@@ -204,6 +226,7 @@ AgentSessionHardeningChecks.Run(Check);
 AgentSessionPersistenceChecks.Run(Check);
 await RealMessageContextChecks.RunAsync(Check);
 await IdentityNormalizationChecks.RunAsync(Check);
+await RealMultiBuyerContextChecks.RunAsync(Check);
 await AgentBridgeChecks.RunAsync(Check);
 await RuntimeObserverChecks.RunAsync(Check);
 FeedbackRouterChecks.Run(Check);
@@ -213,5 +236,5 @@ await StabilityChecks.RunAsync(Check);
 AssistantChecks.Run(Check);
 AssistantOperationsChecks.Run(Check);
 EvaluationBatchChecks.Run(Check);
-Console.WriteLine($"Passed {passed} checks (V0.4 through V1.34.0-B). Fixtures: {root}");
+Console.WriteLine($"Passed {passed} checks (V0.4 through V1.34.0-C). Fixtures: {root}");
 return 0;

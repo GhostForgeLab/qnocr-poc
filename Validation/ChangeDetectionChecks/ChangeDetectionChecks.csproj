@@ -16,5 +16,6 @@
     <Compile Include="../AgentSessionPersistenceChecks.cs" Link="AgentSessionPersistenceChecks.cs" />
     <Compile Include="../RealMessageContextChecks.cs" Link="RealMessageContextChecks.cs" />
     <Compile Include="../IdentityNormalizationChecks.cs" Link="IdentityNormalizationChecks.cs" />
+    <Compile Include="../RealMultiBuyerContextChecks.cs" Link="RealMultiBuyerContextChecks.cs" />
   </ItemGroup>
 </Project>
