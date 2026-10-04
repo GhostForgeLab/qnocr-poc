@@ -18,5 +18,6 @@
     <Compile Include="../IdentityNormalizationChecks.cs" Link="IdentityNormalizationChecks.cs" />
     <Compile Include="../RealMultiBuyerContextChecks.cs" Link="RealMultiBuyerContextChecks.cs" />
     <Compile Include="../AgentContextIntentChecks.cs" Link="AgentContextIntentChecks.cs" />
+    <Compile Include="../AgentContextKnowledgeChecks.cs" Link="AgentContextKnowledgeChecks.cs" />
   </ItemGroup>
 </Project>

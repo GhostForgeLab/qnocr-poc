@@ -102,6 +102,18 @@ if (args.Length == 2 && args[0] == "--real-message-context-evidence")
     return 0;
 }
 
+if (args.Length == 1 && args[0] == "--agent-context-knowledge-only")
+{
+    await AgentContextKnowledgeChecks.RunAsync(Check);
+    Console.WriteLine($"Passed {passed} Agent Context Knowledge checks (controlled JEV and existing Published LocalFile source). Identity=Observed; AI Reply/AutomaticSend/SentMessages=0; RealMultiBuyer=Pending.");
+    return 0;
+}
+if (args.Length > 0 && args[0].StartsWith("--agent-context-knowledge", StringComparison.Ordinal))
+{
+    Console.Error.WriteLine("Usage: --agent-context-knowledge-only");
+    return 2;
+}
+
 if (args.Length == 1 && args[0] == "--agent-context-intent-only")
 {
     await AgentContextIntentChecks.RunAsync(Check);
@@ -266,6 +278,7 @@ AgentSessionPersistenceChecks.Run(Check);
 await RealMessageContextChecks.RunAsync(Check);
 await IdentityNormalizationChecks.RunAsync(Check);
 await AgentContextIntentChecks.RunAsync(Check);
+await AgentContextKnowledgeChecks.RunAsync(Check);
 await RealMultiBuyerContextChecks.RunAsync(Check);
 await RealMultiBuyerContextChecks.RunSingleAsync(Check);
 await AgentBridgeChecks.RunAsync(Check);
@@ -277,5 +290,5 @@ await StabilityChecks.RunAsync(Check);
 AssistantChecks.Run(Check);
 AssistantOperationsChecks.Run(Check);
 EvaluationBatchChecks.Run(Check);
-Console.WriteLine($"Passed {passed} checks (V0.4 through V1.35.0-A). Fixtures: {root}");
+Console.WriteLine($"Passed {passed} checks (V0.4 through V1.35.0-B). Fixtures: {root}");
 return 0;

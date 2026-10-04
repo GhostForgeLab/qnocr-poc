@@ -18,9 +18,9 @@ public static class AgentContextCaptureCommand
 
     public static async Task<int> RunAsync(string[] args, CancellationToken cancellationToken = default)
     {
-        const string usage = "--agent-context-capture --database <file> --output <new-directory> --hwnd <hex> --prefix <unique-test-marker> --buyer-label <expected-observed-label> --frames <1..600> --interval-ms <1000..60000> [--intent-config <file>]";
+        const string usage = "--agent-context-capture --database <file> --output <new-directory> --hwnd <hex> --prefix <unique-test-marker> --buyer-label <expected-observed-label> --frames <1..600> --interval-ms <1000..60000> [--intent-config <file>] [--product-state <directory> --knowledge-config <file> --knowledge-workflow <file>]";
         var values = new Dictionary<string, string>(StringComparer.Ordinal);
-        if (args.Length is not (15 or 17)) { Console.Error.WriteLine(usage); return 2; }
+        if (args.Length is not (15 or 17 or 23)) { Console.Error.WriteLine(usage); return 2; }
         for (var i = 1; i < args.Length; i += 2)
             if (!values.TryAdd(args[i], args[i + 1]) || string.IsNullOrWhiteSpace(args[i + 1]))
             { Console.Error.WriteLine(usage); return 2; }
@@ -34,7 +34,13 @@ public static class AgentContextCaptureCommand
             !values.TryGetValue("--interval-ms", out var intervalText) || !int.TryParse(intervalText, out var interval) || interval is < 1000 or > 60000)
         { Console.Error.WriteLine(usage); return 2; }
         var intentEnabled = values.TryGetValue("--intent-config", out var intentConfig);
-        if (args.Length == 17 && !intentEnabled) { Console.Error.WriteLine(usage); return 2; }
+        var hasProductState = values.TryGetValue("--product-state", out var productState);
+        var hasKnowledgeConfig = values.TryGetValue("--knowledge-config", out var knowledgeConfig);
+        var hasWorkflow = values.TryGetValue("--knowledge-workflow", out var workflow);
+        var knowledgeEnabled = hasProductState && hasKnowledgeConfig && hasWorkflow;
+        if (args.Length >= 17 && !intentEnabled || args.Length == 23 && !knowledgeEnabled ||
+            args.Length != 23 && (hasProductState || hasKnowledgeConfig || hasWorkflow))
+        { Console.Error.WriteLine(usage); return 2; }
         var normalizer = new IdentityNormalizer();
         var normalizedExpectedBuyerLabel = normalizer.Normalize(expectedBuyerLabel);
         output = Path.GetFullPath(output);
@@ -48,11 +54,25 @@ public static class AgentContextCaptureCommand
         var sellerId = ObservedId("seller", window.WindowTitle);
         Directory.CreateDirectory(output);
         using var pipeline = intentEnabled ? null : new AgentContextPipeline(database);
-        using var intentPipeline = intentEnabled ? new AgentIntentPipeline(database, intentConfig!) : null;
-        var mode = intentEnabled ? "ShadowContextIntent" : "ShadowContextOnly";
+        using var intentPipeline = intentEnabled && !knowledgeEnabled ? new AgentIntentPipeline(database, intentConfig!) : null;
+        using var knowledgePipeline = knowledgeEnabled ? new AgentKnowledgePipeline(database,
+            productState!, knowledgeConfig!, workflow!, intentConfig!) : null;
+        var databasePath = knowledgePipeline?.DatabasePath ?? intentPipeline?.DatabasePath ?? pipeline!.DatabasePath;
+        var mode = knowledgeEnabled ? "ShadowContextIntentKnowledge" : intentEnabled ? "ShadowContextIntent" : "ShadowContextOnly";
         var intentResults = new List<AgentIntentMessageResult>();
-        AgentSession Process(MessageEnvelope envelope, string receiptPath)
+        var knowledgeResults = new List<AgentKnowledgeMessageResult>();
+        async Task<AgentSession> Process(MessageEnvelope envelope, string receiptPath,
+            OcrResult? productOcr, string captureId, DateTimeOffset capturedAt)
         {
+            if (knowledgePipeline is not null)
+            {
+                var knowledge = await knowledgePipeline.ProcessMessageAsync(envelope, productOcr, captureId,
+                    capturedAt, cancellationToken);
+                intentResults.AddRange(knowledge.IntentResults);
+                knowledgeResults.AddRange(knowledge.Results);
+                Write(receiptPath, knowledge);
+                return knowledge.Session;
+            }
             if (intentPipeline is null) return pipeline!.ProcessMessage(envelope);
             var result = intentPipeline.ProcessMessage(envelope);
             intentResults.AddRange(result.Results);
@@ -62,12 +82,12 @@ public static class AgentContextCaptureCommand
         var startedAt = DateTimeOffset.UtcNow;
         Write(Path.Combine(output, "session.json"), new
         {
-            Version = intentEnabled ? "1.35.0-A" : "1.34.0-B", Mode = mode, StartedAt = startedAt,
-            DatabasePath = intentPipeline?.DatabasePath ?? pipeline!.DatabasePath, TestPrefix = prefix, ExpectedBuyerLabel = expectedBuyerLabel, SellerId = sellerId,
+            Version = knowledgeEnabled ? "1.35.0-B" : intentEnabled ? "1.35.0-A" : "1.34.0-B", Mode = mode, StartedAt = startedAt,
+            DatabasePath = databasePath, TestPrefix = prefix, ExpectedBuyerLabel = expectedBuyerLabel, SellerId = sellerId,
             NormalizedExpectedBuyerLabel = normalizedExpectedBuyerLabel,
             WindowHandle = handle, WindowTitle = window.WindowTitle,
             IdentityLevel = "Observed", frames, interval,
-            AiCalls = 0, IntentCalls = 0, IntentEnabled = intentEnabled, KnowledgeCalls = 0, SendEnabled = false, SentMessages = 0
+            AiCalls = 0, IntentCalls = 0, IntentEnabled = intentEnabled, KnowledgeEnabled = knowledgeEnabled, KnowledgeCalls = 0, SendEnabled = false, SentMessages = 0
         });
         var native = new NativeWorkerClient();
         var structurer = new BuyerMessageStructurer();
@@ -77,7 +97,7 @@ public static class AgentContextCaptureCommand
         var completedFrames = 0;
         var ocrCalls = 0;
         string? previousHash = null;
-        Console.WriteLine($"CONTEXT_CAPTURE_READY: {output}; Prefix={prefix}; AI=OFF; Intent={(intentEnabled ? intentPipeline!.SelectedProvider : "OFF")}; Knowledge=OFF; Send=OFF");
+        Console.WriteLine($"CONTEXT_CAPTURE_READY: {output}; Prefix={prefix}; AI=OFF; Intent={knowledgePipeline?.SelectedIntentProvider ?? intentPipeline?.SelectedProvider ?? "OFF"}; Knowledge={(knowledgeEnabled ? "PublishedOnly" : "OFF")}; Send=OFF");
         for (var frame = 1; frame <= frames; frame++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -130,6 +150,22 @@ public static class AgentContextCaptureCommand
                         Write(Path.Combine(slot, "identity.json"), new { SellerId = sellerId,
                             BuyerId = buyerId, BuyerLabel = buyerLabel, NormalizedBuyerLabel = normalizedBuyerLabel,
                             IdentityLevel = "Observed" });
+                        OcrResult? productOcr = null;
+                        var capturedAt = DateTimeOffset.UtcNow;
+                        var captureId = Path.GetFullPath(slot);
+                        if (knowledgeEnabled)
+                        {
+                            try
+                            {
+                                productOcr = await native.RecognizeAsync(Path.Combine(slot, "product_region.png"), cancellationToken);
+                                Write(Path.Combine(slot, "product-ocr.json"), productOcr);
+                            }
+                            catch (Exception error) when (error is not OutOfMemoryException &&
+                                !(error is OperationCanceledException && cancellationToken.IsCancellationRequested))
+                            {
+                                Write(Path.Combine(slot, "product-ocr-error.json"), new { Error = error.GetType().Name });
+                            }
+                        }
                         IMessageSource source = new OcrMessageSource(_ => Task.FromResult(selected),
                             sellerId, buyerId);
                         await foreach (var envelope in source.ReadAsync(cancellationToken))
@@ -137,11 +173,15 @@ public static class AgentContextCaptureCommand
                             var number = ++envelopes;
                             var envelopePath = Path.Combine(slot, $"envelope_{number:D4}.json");
                             Write(envelopePath, envelope);
-                            var context = Process(envelope, Path.Combine(slot, $"intent_{number:D4}.json"));
+                            var receiptPrefix = knowledgeEnabled ? "knowledge" : "intent";
+                            var context = await Process(envelope, Path.Combine(slot, $"{receiptPrefix}_{number:D4}.json"), productOcr, captureId, capturedAt);
                             // A fresh DTO traverses Stable Identity and Manager again, without upstream dedupe.
                             var retry = JsonSerializer.Deserialize<MessageEnvelope>(File.ReadAllText(envelopePath))!;
                             var beforeIntentCount = intentResults.Count;
-                            var repeated = Process(retry, Path.Combine(slot, $"intent_replay_{number:D4}.json"));
+                            var beforeKnowledgeCount = knowledgePipeline?.KnowledgeCalls ?? 0;
+                            var repeated = await Process(retry, Path.Combine(slot, $"{receiptPrefix}_replay_{number:D4}.json"), productOcr, captureId, capturedAt);
+                            if ((knowledgePipeline?.KnowledgeCalls ?? 0) != beforeKnowledgeCount)
+                                throw new InvalidDataException("Repeated envelope retriggered Knowledge.");
                             if (intentResults.Count != beforeIntentCount) throw new InvalidDataException("Repeated envelope retriggered Intent.");
                             if (!ReferenceEquals(context, repeated)) throw new InvalidDataException("Repeated envelope changed Context.");
                             duplicateChecks++;
@@ -155,24 +195,28 @@ public static class AgentContextCaptureCommand
             }
             if (frame < frames) await Task.Delay(interval, cancellationToken);
         }
-        var sessions = new SQLiteAgentSessionStore(intentPipeline?.DatabasePath ?? pipeline!.DatabasePath).LoadSessions();
+        var sessions = new SQLiteAgentSessionStore(databasePath).LoadSessions();
         Write(Path.Combine(output, "summary.json"), new
         {
             Mode = mode, StartedAt = startedAt, EndedAt = DateTimeOffset.UtcNow,
             CompletedFrames = completedFrames, FailedFrames = failedFrames, OcrCalls = ocrCalls,
             Envelopes = envelopes, DuplicateChecks = duplicateChecks, Sessions = sessions.Count,
             StoredMessages = sessions.Sum(s => s.Messages.Count),
-            AiCalls = 0, IntentCalls = intentResults.Count, KnowledgeCalls = 0, ReplyCalls = 0,
+            AiCalls = 0, IntentCalls = intentResults.Count, KnowledgeCalls = knowledgePipeline?.KnowledgeCalls ?? 0, ReplyCalls = 0,
             JEVSuccess = intentResults.Count(item => item.Provider == "JEV" && item.Error is null),
             RuleFallbackCount = intentResults.Count(item => item.FallbackUsed),
             IntentErrors = intentResults.Count(item => item.Error is not null),
             AverageIntentLatencyMilliseconds = intentResults.Count == 0 ? 0 : intentResults.Average(item => item.LatencyMilliseconds),
+            KnowledgeAvailable = knowledgeResults.Count(item => item.QueryStatus == KnowledgeStatuses.Available),
+            KnowledgeErrors = knowledgeResults.Count(item => item.QueryStatus == AgentKnowledgePipeline.KnowledgeUnavailable),
             SendEnabled = false, SentMessages = 0,
-            Status = intentResults.Any(item => item.Error is not null) ? "CapturedWithIntentErrors"
+            Status = knowledgeResults.Any(item => item.Error is not null) ? "CapturedWithKnowledgeErrors"
+                : intentResults.Any(item => item.Error is not null) ? "CapturedWithIntentErrors"
                 : envelopes > 0 ? "Captured" : "NoControlledMessages"
         });
-        Console.WriteLine($"CONTEXT_CAPTURE_END: Envelopes={envelopes}; DuplicateChecks={duplicateChecks}; Sessions={sessions.Count}; IntentCalls={intentResults.Count}; AI/Knowledge/Reply/SentMessages=0");
-        return envelopes > 0 && intentResults.All(item => item.Error is null) ? 0 : 3;
+        Console.WriteLine($"CONTEXT_CAPTURE_END: Envelopes={envelopes}; DuplicateChecks={duplicateChecks}; Sessions={sessions.Count}; IntentCalls={intentResults.Count}; KnowledgeCalls={knowledgePipeline?.KnowledgeCalls ?? 0}; AI/Reply/SentMessages=0");
+        return envelopes > 0 && intentResults.All(item => item.Error is null) &&
+            knowledgeResults.All(item => item.Error is null) ? 0 : 3;
     }
 
     private static string ObservedId(string role, string label) =>
