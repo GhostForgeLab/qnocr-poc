@@ -19,6 +19,14 @@ namespace QnocrPoc.Integration.Wire
         public string MessageId { get; set; }
         public string AiRequestId { get; set; }
         public int ModelInputMessageCount { get; set; }
+        // Optional Agent Preview metadata; old Shadow contexts leave these unset.
+        public string SellerId { get; set; }
+        public string SessionStatus { get; set; }
+        public string IntentName { get; set; }
+        public double? IntentConfidence { get; set; }
+        public string IntentProvider { get; set; }
+        public string KnowledgeId { get; set; }
+        public string KnowledgeReference { get; set; }
         public List<EnvelopeMessage> Messages { get; set; }
         public KnowledgeContextWire Knowledge { get; set; }
         public BoundProductContextWire CurrentProductContext { get; set; }

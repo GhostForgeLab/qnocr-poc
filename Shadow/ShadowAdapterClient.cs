@@ -5,23 +5,37 @@ namespace QnocrPoc.Shadow;
 
 public sealed record ShadowAdapterResult(string Status, int ConvertedMessages, string? ReceiptPath, string? Reason,
     bool AiInvoked = false, string? ReplySuggestion = null, int? PromptLength = null, DateTimeOffset? AiRequestAt = null,
-    int AiCalls = 0);
+    int AiCalls = 0, string? AiProvider = null, string? AiModel = null);
 
 /// <summary>Calls only the isolated conversion-only host. Never attaches to a running Bot process.</summary>
-public sealed class ShadowAdapterClient(bool aiShadow = false, bool dispatch = false, string? aiProviderConfigPath = null)
+public sealed class ShadowAdapterClient(bool aiShadow = false, bool dispatch = false, string? aiProviderConfigPath = null, bool agentReplyPreview = false,
+    string? controlledReplyMode = null)
 {
     public async Task<ShadowAdapterResult> ConvertAsync(string envelopePath, string? identityPath, string outputDirectory, CancellationToken token)
     {
+        if (agentReplyPreview && !aiShadow)
+            throw new InvalidOperationException("Agent Preview requires AI Shadow receipt validation.");
         var host = Path.GetFullPath(Path.Combine("Validation", "QnbotCompatibility", "bin", "Debug", "net48", "QnbotCompatibility.exe"));
         if (!File.Exists(host)) return new("HostUnavailable", 0, null, "Build the pinned compatibility host first; no runtime Bot fallback.");
         Directory.CreateDirectory(outputDirectory);
         var start = new ProcessStartInfo(host) { UseShellExecute = false, CreateNoWindow = true, WindowStyle = ProcessWindowStyle.Hidden,
             RedirectStandardOutput = true, RedirectStandardError = true };
-        start.ArgumentList.Add(aiShadow ? "--ai-shadow" : dispatch ? "--dispatch-shadow" : "--shadow-convert");
-        start.ArgumentList.Add(Path.GetFullPath(envelopePath));
-        start.ArgumentList.Add(identityPath is null ? "-" : Path.GetFullPath(identityPath));
-        start.ArgumentList.Add(Path.GetFullPath(outputDirectory));
-        if (aiShadow)
+        if (agentReplyPreview)
+        {
+            start.ArgumentList.Add(controlledReplyMode is null ? "--agent-reply-preview" : "--agent-reply-preview-controlled");
+            start.ArgumentList.Add(Path.GetFullPath(envelopePath));
+            start.ArgumentList.Add(Path.GetFullPath(aiProviderConfigPath ?? "Config/ai-provider.json"));
+            start.ArgumentList.Add(Path.GetFullPath(outputDirectory));
+            if (controlledReplyMode is not null) start.ArgumentList.Add(controlledReplyMode);
+        }
+        else
+        {
+            start.ArgumentList.Add(aiShadow ? "--ai-shadow" : dispatch ? "--dispatch-shadow" : "--shadow-convert");
+            start.ArgumentList.Add(Path.GetFullPath(envelopePath));
+            start.ArgumentList.Add(identityPath is null ? "-" : Path.GetFullPath(identityPath));
+            start.ArgumentList.Add(Path.GetFullPath(outputDirectory));
+        }
+        if (aiShadow && !agentReplyPreview)
         {
             var contextPath = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(envelopePath))!, "context.json");
             var modelContext = Path.Combine(Path.GetFullPath(outputDirectory), "model-context.json");
@@ -54,8 +68,8 @@ public sealed class ShadowAdapterClient(bool aiShadow = false, bool dispatch = f
         if ((!aiShadow && process.ExitCode != 0) || !File.Exists(receiptPath)) return new("HostFailed", 0, null, $"Isolated adapter exit code {process.ExitCode}; see adapter-process.log.");
         using var receipt = JsonDocument.Parse(await File.ReadAllTextAsync(receiptPath, token));
         var value = receipt.RootElement;
-        if (value.GetProperty("Mode").GetString() != (aiShadow ? "AiShadowPreviewOnly" : dispatch ? "ShadowDispatchOnly" : "ShadowConversionOnly") ||
-            value.GetProperty("CoordinatorCreated").GetBoolean() != (aiShadow || dispatch) || value.GetProperty("ForbiddenBusinessCalls").GetInt32() != 0 ||
+        if (value.GetProperty("Mode").GetString() != (agentReplyPreview ? "AgentReplyPreviewOnly" : aiShadow ? "AiShadowPreviewOnly" : dispatch ? "ShadowDispatchOnly" : "ShadowConversionOnly") ||
+            value.GetProperty("CoordinatorCreated").GetBoolean() != (aiShadow && !agentReplyPreview || dispatch) || value.GetProperty("ForbiddenBusinessCalls").GetInt32() != 0 ||
             (!aiShadow && !dispatch && value.GetProperty("RuntimeInitializers").GetInt32() != 0) ||
             ((aiShadow || dispatch) && (value.GetProperty("SendEnabled").GetBoolean() || value.GetProperty("SendEntryInvoked").GetBoolean() || value.GetProperty("SentMessages").GetInt32() != 0)))
             throw new InvalidDataException("Adapter receipt violates conversion-only boundary.");
@@ -65,6 +79,8 @@ public sealed class ShadowAdapterClient(bool aiShadow = false, bool dispatch = f
         return new(value.GetProperty("Status").GetString()!, value.GetProperty("ConvertedMessages").GetInt32(), Path.GetFullPath(receiptPath),
             value.GetProperty("Reason").GetString(), aiShadow && value.GetProperty("AiInvoked").GetBoolean(),
             aiShadow ? value.GetProperty("ReplySuggestion").GetString() : null, promptLength, at,
-            aiShadow && value.TryGetProperty("AiCalls", out var calls) ? calls.GetInt32() : 0);
+            aiShadow && value.TryGetProperty("AiCalls", out var calls) ? calls.GetInt32() : 0,
+            value.TryGetProperty("ProviderName", out var provider) ? provider.GetString() : null,
+            value.TryGetProperty("ProviderModel", out var model) ? model.GetString() : null);
     }
 }

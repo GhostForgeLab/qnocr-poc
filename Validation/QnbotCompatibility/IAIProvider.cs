@@ -6,9 +6,11 @@ namespace CompatibilityHost
     internal interface IAIProvider
     {
         AIProviderConfig Config { get; }
+        int PreviewHttpCalls { get; }
         void PrepareAgentPipeline();
         Task<string> GenerateAsync(string seller, string buyer, string question, CancellationToken token);
         Task<ProviderSmokeResult> SmokeAsync(string question);
+        Task<ProviderSmokeResult> PreviewAsync(string question, CancellationToken token);
     }
 
     internal sealed class ProviderSmokeResult

@@ -12,7 +12,7 @@ public static class KnowledgeModelContextWriter
     { "Capacity", "Size", "Weight", "Material", "CustomizationPolicy" };
 
     public static KnowledgeContextView Write(string path, SessionContextView context,
-        KnowledgeRequest request, KnowledgeResult result, string status)
+        KnowledgeRequest request, KnowledgeResult result, string status, bool publishedPreview = false)
     {
         var missingContext = status == KnowledgeStatuses.MissingProductContext &&
             request.MissingProductContext && request.ProductReference is null;
@@ -30,7 +30,9 @@ public static class KnowledgeModelContextWriter
             !string.IsNullOrWhiteSpace(result.ProductVersion) && !result.MissingProduct &&
             result.Source == "LocalTestProductConfig" && result.ReturnedFields is { Count: > 0 } &&
             !string.IsNullOrWhiteSpace(context.ProductId) && result.MissingFields.Count == 0 &&
-            result.ReturnedFields.Keys.All(AllowedFacts.Contains) &&
+            result.ReturnedFields.Keys.All(key => AllowedFacts.Contains(key) || publishedPreview &&
+                new[] { "Waterproof", "ShippingTime", "ReturnPolicy", "CurrentPrice", "Specification", "Unspecified" }.Contains(key)) &&
+            (!publishedPreview || !string.IsNullOrWhiteSpace(result.KnowledgeId) && result.ItemSource is not null) &&
             request.NeedFields.All(result.ReturnedFields.ContainsKey) &&
             result.ReturnedFields.Values.All(value => !string.IsNullOrWhiteSpace(value) && value.Length <= 200 &&
                 !value.Any(ch => char.IsControl(ch) || ch is '<' or '>' or '{' or '}'));

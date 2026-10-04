@@ -39,10 +39,11 @@ namespace CompatibilityHost
 
     internal static class AIProviderFactory
     {
-        public static IAIProvider Create(AIProviderConfig config, AiShadowRuntime runtime)
+        public static IAIProvider Create(AIProviderConfig config, AiShadowRuntime runtime,
+            System.Net.Http.HttpClient previewClient = null, Func<string> previewKey = null)
         {
             if (string.Equals(config.ProviderName, "OpenRouter", StringComparison.OrdinalIgnoreCase))
-                return new OpenRouterProvider(config, runtime);
+                return new OpenRouterProvider(config, runtime, previewClient, previewKey);
             throw new NotSupportedException("Unknown AI provider: " + config.ProviderName);
         }
     }

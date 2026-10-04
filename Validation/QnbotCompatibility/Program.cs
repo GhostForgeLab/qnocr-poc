@@ -24,6 +24,16 @@ namespace CompatibilityHost
         }
         private static async Task<int> RunAsync(string[] args)
         {
+            if (args.Length == 4 && args[0] == "--agent-reply-preview")
+            {
+                VerifySourceSnapshot();
+                return await AgentReplyPreviewHost.RunAsync(args[1], args[2], args[3]);
+            }
+            if (args.Length == 5 && args[0] == "--agent-reply-preview-controlled")
+            {
+                VerifySourceSnapshot();
+                return await AgentReplyPreviewHost.RunAsync(args[1], args[2], args[3], args[4]);
+            }
             if (args.Length == 2 && args[0] == "--ai-configure-openrouter")
             {
                 Console.WriteLine(Json.Serialize(AiShadowRuntime.ConfigureOpenRouter(args[1])));
@@ -324,7 +334,7 @@ namespace CompatibilityHost
             return binding == null && context.ProductId == envelope.ProductId &&
                 new[] { "Unknown", "Uncertain", "Conflict" }.Contains(context.ProductContextBindingStatus);
         }
-        private static string BuildModelQuestion(string currentQuestion, AgentContextWire context)
+        internal static string BuildModelQuestion(string currentQuestion, AgentContextWire context)
         {
             string baseQuestion;
             if (context == null || context.ModelInputMessageCount == 1) baseQuestion = currentQuestion;
@@ -337,6 +347,14 @@ namespace CompatibilityHost
                     question.Append(message.Timestamp).Append(' ').Append(message.Role).Append(": ").Append(message.Text).Append('\n');
                 baseQuestion = question.Append("【当前买家消息】\n").Append(currentQuestion).ToString();
             }
+            if (context != null && context.IntentName != null)
+            {
+                baseQuestion += "\n【当前意图（路由提示，不是商品身份）】\nIntent: " + context.IntentName
+                    + "; Confidence: " + context.IntentConfidence + "; Provider: " + context.IntentProvider;
+                if (context.CurrentProductContext != null)
+                    baseQuestion += "\nProductName: " + context.CurrentProductContext.ProductName
+                        + "; ProductContextSource: " + context.CurrentProductContext.Source;
+            }
             if (context == null || context.Knowledge == null) return baseQuestion;
             var knowledge = context.Knowledge;
             var result = new StringBuilder(baseQuestion).Append("\n【本地测试商品上下文】\n");
@@ -345,6 +363,9 @@ namespace CompatibilityHost
                 result.Append("SellerId: ").Append(knowledge.SellerId).Append("; ProductId: ").Append(knowledge.ProductId)
                     .Append("; Version: ").Append(knowledge.ProductVersion).Append("; Source: ").Append(knowledge.Source)
                     .Append("; Category: ").Append(knowledge.KnowledgeCategory).Append('\n');
+                if (context.KnowledgeId != null)
+                    result.Append("KnowledgeId: ").Append(context.KnowledgeId).Append("; Reference: ")
+                        .Append(context.KnowledgeReference).Append('\n');
                 foreach (var fact in knowledge.FactFields.OrderBy(pair => pair.Key, StringComparer.Ordinal))
                     result.Append(fact.Key).Append(": ").Append(fact.Value).Append('\n');
             }
@@ -352,7 +373,7 @@ namespace CompatibilityHost
             return result.ToString();
         }
 
-        private static void ValidateKnowledgeContext(AgentContextWire context, MessageEnvelope envelope)
+        internal static void ValidateKnowledgeContext(AgentContextWire context, MessageEnvelope envelope)
         {
             var knowledge = context.Knowledge;
             if (knowledge == null) return;

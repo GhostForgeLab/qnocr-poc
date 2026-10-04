@@ -251,7 +251,7 @@ public sealed class DurableShadowDispatch : IDisposable
                     if (_enrichAiContext && (knowledgeStatus is KnowledgeStatuses.Missing or KnowledgeStatuses.MissingProductContext) &&
                         knowledgeRequest?.NeedFields.Count > 0 && result.Status == "Converted")
                     {
-                        result = result with { ReplySuggestion = "当前缺少已确认的商品信息，请人工核实后答复。" };
+                        result = result with { ReplySuggestion = KnowledgeReplyGuard.HumanCheckReply };
                         knowledgeGuardApplied = true;
                         _agentTrace.KnowledgeGuardApplied(item, context, knowledgeRequest);
                     }

@@ -13,7 +13,7 @@ internal static class AgentContextKnowledgeChecks
     private const string SellerA = "seller-A", SellerB = "seller-B";
     private const string ProductA = "1051087533910", ProductB = "1111111111111", ProductC = "2222222222222";
     private static readonly DateTime MessageTime = new(2026, 10, 4, 12, 0, 0, DateTimeKind.Unspecified);
-    private sealed class Clock : TimeProvider
+    internal sealed class Clock : TimeProvider
     {
         private DateTimeOffset _now = DateTimeOffset.UtcNow;
         private long _ticks;
@@ -22,7 +22,7 @@ internal static class AgentContextKnowledgeChecks
         public override long GetTimestamp() => _ticks;
         public void Advance(TimeSpan elapsed) { _now += elapsed; _ticks += elapsed.Ticks; }
     }
-    private sealed class JevHandler : HttpMessageHandler
+    internal sealed class JevHandler : HttpMessageHandler
     {
         public int Calls { get; private set; }
         public string Choice { get; set; } = "MATERIAL_QUERY";
@@ -45,7 +45,7 @@ internal static class AgentContextKnowledgeChecks
                 { Content = new StringContent(body, Encoding.UTF8, "application/json") });
         }
     }
-    private sealed class Fixture : IDisposable
+    internal sealed class Fixture : IDisposable
     {
         public string Root { get; }
         public string ProductState { get; }

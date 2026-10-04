@@ -19,5 +19,6 @@
     <Compile Include="../RealMultiBuyerContextChecks.cs" Link="RealMultiBuyerContextChecks.cs" />
     <Compile Include="../AgentContextIntentChecks.cs" Link="AgentContextIntentChecks.cs" />
     <Compile Include="../AgentContextKnowledgeChecks.cs" Link="AgentContextKnowledgeChecks.cs" />
+    <Compile Include="../AgentReplyPreviewChecks.cs" Link="AgentReplyPreviewChecks.cs" />
   </ItemGroup>
 </Project>

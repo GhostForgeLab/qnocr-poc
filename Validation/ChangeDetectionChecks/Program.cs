@@ -102,6 +102,17 @@ if (args.Length == 2 && args[0] == "--real-message-context-evidence")
     return 0;
 }
 
+if (args.Length == 1 && args[0] == "--agent-reply-preview-only")
+{
+    await AgentReplyPreviewChecks.RunAsync(Check);
+    Console.WriteLine($"Passed {passed} Agent Reply Preview checks (controlled existing Provider). Identity=Observed; AutomaticSend/SentMessages=0; ExternalAIReal=NotRun; RealMultiBuyer=Pending.");
+    return 0;
+}
+if (args.Length > 0 && args[0].StartsWith("--agent-reply-preview", StringComparison.Ordinal))
+{
+    Console.Error.WriteLine("Usage: --agent-reply-preview-only");
+    return 2;
+}
 if (args.Length == 1 && args[0] == "--agent-context-knowledge-only")
 {
     await AgentContextKnowledgeChecks.RunAsync(Check);
@@ -279,6 +290,7 @@ await RealMessageContextChecks.RunAsync(Check);
 await IdentityNormalizationChecks.RunAsync(Check);
 await AgentContextIntentChecks.RunAsync(Check);
 await AgentContextKnowledgeChecks.RunAsync(Check);
+await AgentReplyPreviewChecks.RunAsync(Check);
 await RealMultiBuyerContextChecks.RunAsync(Check);
 await RealMultiBuyerContextChecks.RunSingleAsync(Check);
 await AgentBridgeChecks.RunAsync(Check);
@@ -290,5 +302,5 @@ await StabilityChecks.RunAsync(Check);
 AssistantChecks.Run(Check);
 AssistantOperationsChecks.Run(Check);
 EvaluationBatchChecks.Run(Check);
-Console.WriteLine($"Passed {passed} checks (V0.4 through V1.35.0-B). Fixtures: {root}");
+Console.WriteLine($"Passed {passed} checks (V0.4 through V1.35.0-C). Fixtures: {root}");
 return 0;
