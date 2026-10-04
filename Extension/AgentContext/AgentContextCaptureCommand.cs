@@ -18,9 +18,9 @@ public static class AgentContextCaptureCommand
 
     public static async Task<int> RunAsync(string[] args, CancellationToken cancellationToken = default)
     {
-        const string usage = "--agent-context-capture --database <file> --output <new-directory> --hwnd <hex> --prefix <unique-test-marker> --buyer-label <expected-observed-label> --frames <1..600> --interval-ms <1000..60000>";
+        const string usage = "--agent-context-capture --database <file> --output <new-directory> --hwnd <hex> --prefix <unique-test-marker> --buyer-label <expected-observed-label> --frames <1..600> --interval-ms <1000..60000> [--intent-config <file>]";
         var values = new Dictionary<string, string>(StringComparer.Ordinal);
-        if (args.Length != 15) { Console.Error.WriteLine(usage); return 2; }
+        if (args.Length is not (15 or 17)) { Console.Error.WriteLine(usage); return 2; }
         for (var i = 1; i < args.Length; i += 2)
             if (!values.TryAdd(args[i], args[i + 1]) || string.IsNullOrWhiteSpace(args[i + 1]))
             { Console.Error.WriteLine(usage); return 2; }
@@ -33,6 +33,8 @@ public static class AgentContextCaptureCommand
             !values.TryGetValue("--frames", out var frameText) || !int.TryParse(frameText, out var frames) || frames is < 1 or > 600 ||
             !values.TryGetValue("--interval-ms", out var intervalText) || !int.TryParse(intervalText, out var interval) || interval is < 1000 or > 60000)
         { Console.Error.WriteLine(usage); return 2; }
+        var intentEnabled = values.TryGetValue("--intent-config", out var intentConfig);
+        if (args.Length == 17 && !intentEnabled) { Console.Error.WriteLine(usage); return 2; }
         var normalizer = new IdentityNormalizer();
         var normalizedExpectedBuyerLabel = normalizer.Normalize(expectedBuyerLabel);
         output = Path.GetFullPath(output);
@@ -45,16 +47,27 @@ public static class AgentContextCaptureCommand
         // Stable observation labels, never native platform IDs. HWND and capture time are excluded.
         var sellerId = ObservedId("seller", window.WindowTitle);
         Directory.CreateDirectory(output);
-        using var pipeline = new AgentContextPipeline(database);
+        using var pipeline = intentEnabled ? null : new AgentContextPipeline(database);
+        using var intentPipeline = intentEnabled ? new AgentIntentPipeline(database, intentConfig!) : null;
+        var mode = intentEnabled ? "ShadowContextIntent" : "ShadowContextOnly";
+        var intentResults = new List<AgentIntentMessageResult>();
+        AgentSession Process(MessageEnvelope envelope, string receiptPath)
+        {
+            if (intentPipeline is null) return pipeline!.ProcessMessage(envelope);
+            var result = intentPipeline.ProcessMessage(envelope);
+            intentResults.AddRange(result.Results);
+            Write(receiptPath, result);
+            return result.Session;
+        }
         var startedAt = DateTimeOffset.UtcNow;
         Write(Path.Combine(output, "session.json"), new
         {
-            Version = "1.34.0-B", Mode = "ShadowContextOnly", StartedAt = startedAt,
-            DatabasePath = pipeline.DatabasePath, TestPrefix = prefix, ExpectedBuyerLabel = expectedBuyerLabel, SellerId = sellerId,
+            Version = intentEnabled ? "1.35.0-A" : "1.34.0-B", Mode = mode, StartedAt = startedAt,
+            DatabasePath = intentPipeline?.DatabasePath ?? pipeline!.DatabasePath, TestPrefix = prefix, ExpectedBuyerLabel = expectedBuyerLabel, SellerId = sellerId,
             NormalizedExpectedBuyerLabel = normalizedExpectedBuyerLabel,
             WindowHandle = handle, WindowTitle = window.WindowTitle,
             IdentityLevel = "Observed", frames, interval,
-            AiCalls = 0, IntentCalls = 0, KnowledgeCalls = 0, SendEnabled = false, SentMessages = 0
+            AiCalls = 0, IntentCalls = 0, IntentEnabled = intentEnabled, KnowledgeCalls = 0, SendEnabled = false, SentMessages = 0
         });
         var native = new NativeWorkerClient();
         var structurer = new BuyerMessageStructurer();
@@ -64,7 +77,7 @@ public static class AgentContextCaptureCommand
         var completedFrames = 0;
         var ocrCalls = 0;
         string? previousHash = null;
-        Console.WriteLine($"CONTEXT_CAPTURE_READY: {output}; Prefix={prefix}; AI=OFF; Intent=OFF; Knowledge=OFF; Send=OFF");
+        Console.WriteLine($"CONTEXT_CAPTURE_READY: {output}; Prefix={prefix}; AI=OFF; Intent={(intentEnabled ? intentPipeline!.SelectedProvider : "OFF")}; Knowledge=OFF; Send=OFF");
         for (var frame = 1; frame <= frames; frame++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -124,10 +137,12 @@ public static class AgentContextCaptureCommand
                             var number = ++envelopes;
                             var envelopePath = Path.Combine(slot, $"envelope_{number:D4}.json");
                             Write(envelopePath, envelope);
-                            var context = pipeline.ProcessMessage(envelope);
+                            var context = Process(envelope, Path.Combine(slot, $"intent_{number:D4}.json"));
                             // A fresh DTO traverses Stable Identity and Manager again, without upstream dedupe.
                             var retry = JsonSerializer.Deserialize<MessageEnvelope>(File.ReadAllText(envelopePath))!;
-                            var repeated = pipeline.ProcessMessage(retry);
+                            var beforeIntentCount = intentResults.Count;
+                            var repeated = Process(retry, Path.Combine(slot, $"intent_replay_{number:D4}.json"));
+                            if (intentResults.Count != beforeIntentCount) throw new InvalidDataException("Repeated envelope retriggered Intent.");
                             if (!ReferenceEquals(context, repeated)) throw new InvalidDataException("Repeated envelope changed Context.");
                             duplicateChecks++;
                             Write(Path.Combine(slot, $"context_{number:D4}.json"), context);
@@ -140,19 +155,24 @@ public static class AgentContextCaptureCommand
             }
             if (frame < frames) await Task.Delay(interval, cancellationToken);
         }
-        var sessions = new SQLiteAgentSessionStore(pipeline.DatabasePath).LoadSessions();
+        var sessions = new SQLiteAgentSessionStore(intentPipeline?.DatabasePath ?? pipeline!.DatabasePath).LoadSessions();
         Write(Path.Combine(output, "summary.json"), new
         {
-            Mode = "ShadowContextOnly", StartedAt = startedAt, EndedAt = DateTimeOffset.UtcNow,
+            Mode = mode, StartedAt = startedAt, EndedAt = DateTimeOffset.UtcNow,
             CompletedFrames = completedFrames, FailedFrames = failedFrames, OcrCalls = ocrCalls,
             Envelopes = envelopes, DuplicateChecks = duplicateChecks, Sessions = sessions.Count,
             StoredMessages = sessions.Sum(s => s.Messages.Count),
-            AiCalls = 0, IntentCalls = 0, KnowledgeCalls = 0, ReplyCalls = 0,
+            AiCalls = 0, IntentCalls = intentResults.Count, KnowledgeCalls = 0, ReplyCalls = 0,
+            JEVSuccess = intentResults.Count(item => item.Provider == "JEV" && item.Error is null),
+            RuleFallbackCount = intentResults.Count(item => item.FallbackUsed),
+            IntentErrors = intentResults.Count(item => item.Error is not null),
+            AverageIntentLatencyMilliseconds = intentResults.Count == 0 ? 0 : intentResults.Average(item => item.LatencyMilliseconds),
             SendEnabled = false, SentMessages = 0,
-            Status = envelopes > 0 ? "Captured" : "NoControlledMessages"
+            Status = intentResults.Any(item => item.Error is not null) ? "CapturedWithIntentErrors"
+                : envelopes > 0 ? "Captured" : "NoControlledMessages"
         });
-        Console.WriteLine($"CONTEXT_CAPTURE_END: Envelopes={envelopes}; DuplicateChecks={duplicateChecks}; Sessions={sessions.Count}; AI/Intent/Knowledge/Reply/SentMessages=0");
-        return envelopes > 0 ? 0 : 3;
+        Console.WriteLine($"CONTEXT_CAPTURE_END: Envelopes={envelopes}; DuplicateChecks={duplicateChecks}; Sessions={sessions.Count}; IntentCalls={intentResults.Count}; AI/Knowledge/Reply/SentMessages=0");
+        return envelopes > 0 && intentResults.All(item => item.Error is null) ? 0 : 3;
     }
 
     private static string ObservedId(string role, string label) =>

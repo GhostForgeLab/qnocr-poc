@@ -18,7 +18,12 @@ public sealed record SessionContextView(string SessionId, string BuyerId, string
     IReadOnlyList<ProductReference>? ProductReferences = null,
     IReadOnlyList<MessageProductLink>? MessageProductLinks = null, BuyerIdentity? Identity = null,
     BoundProductContext? CurrentProductContext = null,
-    ProductContextBindingStatus? ProductContextBindingStatus = null);
+    ProductContextBindingStatus? ProductContextBindingStatus = null)
+{
+    /// <summary>Opt-in, bounded prior dialogue for Intent only. Null preserves the legacy single-question request.</summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<EnvelopeMessage>? IntentRecentMessages { get; init; }
+}
 
 /// <summary>Model confidence is unavailable until a calibrated score exists; never invent a probability.</summary>
 public sealed record ReplyPreview(string SessionId, string BuyerId, SessionContextView Input, string Reply,

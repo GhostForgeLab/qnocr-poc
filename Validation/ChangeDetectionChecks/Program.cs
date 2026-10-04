@@ -102,6 +102,18 @@ if (args.Length == 2 && args[0] == "--real-message-context-evidence")
     return 0;
 }
 
+if (args.Length == 1 && args[0] == "--agent-context-intent-only")
+{
+    await AgentContextIntentChecks.RunAsync(Check);
+    Console.WriteLine($"Passed {passed} Agent Context Intent checks (controlled HTTP, existing JEV provider). Identity=Observed; Knowledge/AI Reply/SentMessages=0; RealMultiBuyer=Pending.");
+    return 0;
+}
+if (args.Length > 0 && args[0].StartsWith("--agent-context-intent", StringComparison.Ordinal))
+{
+    Console.Error.WriteLine("Usage: --agent-context-intent-only");
+    return 2;
+}
+
 if (args.Length == 1 && args[0] == "--identity-normalization-only")
 {
     await IdentityNormalizationChecks.RunAsync(Check);
@@ -253,6 +265,7 @@ AgentSessionHardeningChecks.Run(Check);
 AgentSessionPersistenceChecks.Run(Check);
 await RealMessageContextChecks.RunAsync(Check);
 await IdentityNormalizationChecks.RunAsync(Check);
+await AgentContextIntentChecks.RunAsync(Check);
 await RealMultiBuyerContextChecks.RunAsync(Check);
 await RealMultiBuyerContextChecks.RunSingleAsync(Check);
 await AgentBridgeChecks.RunAsync(Check);
@@ -264,5 +277,5 @@ await StabilityChecks.RunAsync(Check);
 AssistantChecks.Run(Check);
 AssistantOperationsChecks.Run(Check);
 EvaluationBatchChecks.Run(Check);
-Console.WriteLine($"Passed {passed} checks (V0.4 through V1.34.0-C). Fixtures: {root}");
+Console.WriteLine($"Passed {passed} checks (V0.4 through V1.35.0-A). Fixtures: {root}");
 return 0;
