@@ -89,6 +89,38 @@ internal static class AgentReplyPreviewChecks
             var first = await f.Process(envelope, Ocr(ProductA));
             var result = One(first);
             var preview = result.Preview ?? throw new InvalidDataException("Expected a controlled Provider Preview.");
+            var consoleRun = Path.Combine(f.Data.Root, "console-run");
+            var consoleFrames = Path.Combine(consoleRun, "frames", "0001");
+            Directory.CreateDirectory(consoleFrames);
+            var consoleMetadata = Path.Combine(consoleRun, "session.json");
+            File.WriteAllText(consoleMetadata, JsonSerializer.Serialize(new
+            { Mode = "ShadowReplyPreview", StateDirectory = f.State, SendEnabled = false, SentMessages = 0 }));
+            File.WriteAllText(Path.Combine(consoleFrames, "reply_0001.json"), JsonSerializer.Serialize(first));
+            File.WriteAllText(Path.Combine(consoleFrames, "reply_replay_0001.json"), JsonSerializer.Serialize(first));
+            var console = new AgentConsoleReadService(f.State, consoleRun);
+            check(console.ListSessions().Single().PreviewCount == 1 &&
+                console.RequirePreviewSession(preview.ReplyPreviewId) == preview.SessionId,
+                "Agent web projection accepts new IDs and hashed folders without counting replay receipts");
+            var consoleView = console.GetConversation(preview.SessionId);
+            check(consoleView.Timeline.Single().Text == envelope.Messages[0].Text &&
+                consoleView.Previews.Single().IntentProvider == "JEV" &&
+                consoleView.Previews.Single().View.AiReply == preview.Reply && !consoleView.CanClearProduct,
+                "Agent web conversation reads actual reply, intent and current capture message");
+            Reject<KeyNotFoundException>(() => console.GetConversation(Guid.NewGuid().ToString("N")), check,
+                "Agent console rejects sessions from outside the selected capture");
+            Reject<InvalidDataException>(() => new AgentConsoleReadService(Path.Combine(f.Data.Root, "foreign-state"), consoleRun), check,
+                "Agent console rejects a foreign review state directory");
+            var failure = result with { Preview = null, Status = "AIUnavailable", Error = "ControlledError" };
+            File.WriteAllText(Path.Combine(consoleFrames, "reply_0002.json"), JsonSerializer.Serialize(first with { Results = [failure] }));
+            check(console.GetConversation(preview.SessionId).Notices!.Single().Contains("AIUnavailable"),
+                "Agent console shows AI failures even when no preview is published");
+            File.Delete(Path.Combine(consoleFrames, "reply_0002.json"));
+            var publishedPath = Path.Combine(f.Folder(preview), "reply-preview.json");
+            var originalPreview = File.ReadAllText(publishedPath);
+            File.WriteAllText(publishedPath, JsonSerializer.Serialize(preview with { Reply = "tampered" }));
+            Reject<InvalidDataException>(() => console.GetConversation(preview.SessionId), check,
+                "Agent console rejects a preview that differs from its capture receipt");
+            File.WriteAllText(publishedPath, originalPreview);
             check(result.Status == "ReadyForReview" && result.AiProvider == "OpenRouter" && result.AiModel == "openai/gpt-5.5" &&
                 result.AiInvoked && result.AiCalls == 1,
                 "actual existing OpenRouter factory/non-streaming transport creates one controlled Reply Preview");

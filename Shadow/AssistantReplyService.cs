@@ -19,13 +19,19 @@ public sealed class WindowsAssistantClipboard : IAssistantClipboard
         Exception? error = null;
         var thread = new Thread(() =>
         {
-            try { System.Windows.Forms.Clipboard.SetText(text); }
+            try
+            {
+                // Flush the data before this STA thread exits; retry transient clipboard contention.
+                System.Windows.Forms.Clipboard.SetDataObject(text, true, 5, 80);
+                if (System.Windows.Forms.Clipboard.GetText() != text)
+                    throw new IOException("Clipboard readback did not match the approved reply.");
+            }
             catch (Exception ex) { error = ex; }
         });
         thread.SetApartmentState(ApartmentState.STA);
         thread.Start();
         thread.Join();
-        if (error is not null) throw new InvalidOperationException("Clipboard write failed.", error);
+        if (error is not null) throw new InvalidOperationException("复制失败：剪贴板可能正被占用，请再次点击复制。", error);
     }
 }
 
@@ -111,7 +117,8 @@ public sealed class AssistantReplyService(string stateRoot, IFeedbackRouter? fee
         return View(preview, state);
     }
 
-    public AssistedReplyView Copy(string previewId, string operatorId, string expectedHash, IAssistantClipboard clipboard)
+    public AssistedReplyView Copy(string previewId, string operatorId, string expectedHash, IAssistantClipboard clipboard,
+        bool allowRepeat = false)
     {
         ValidateOperator(operatorId);
         ArgumentNullException.ThrowIfNull(clipboard);
@@ -119,7 +126,7 @@ public sealed class AssistantReplyService(string stateRoot, IFeedbackRouter? fee
         using var gate = Lock(folder);
         var state = Ensure(folder, preview);
         HoldRejectedFeedback(folder);
-        if (state.Status != AssistedReplyStatuses.Approved)
+        if (state.Status != AssistedReplyStatuses.Approved && !(allowRepeat && state.Status == AssistedReplyStatuses.Copied))
             throw new InvalidOperationException("Only an approved reply can be copied once.");
         VerifyHash(state, expectedHash);
         try { clipboard.SetText(Effective(state)); }

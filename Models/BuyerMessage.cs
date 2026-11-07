@@ -7,6 +7,10 @@ public sealed class BuyerMessage
     public required DateTime Timestamp { get; init; }
     public string Source { get; init; } = "Qianniu.PaddleOCR";
     public string ProductId { get; init; } = string.Empty;
+    public string ContentKind { get; init; } = "Text";
+    public string VisualFingerprint { get; init; } = "";
+    [System.Text.Json.Serialization.JsonIgnore]
+    public byte[]? PreviewPng { get; init; }
 }
 
 public sealed record BuyerMessageEvidence(int MessageIndex, OcrBounds BubbleBounds,

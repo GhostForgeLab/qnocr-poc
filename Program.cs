@@ -15,6 +15,13 @@ using QnocrPoc.Knowledge;
 using QnocrPoc.Decision;
 
 // Owned one-shot native workers: parent kills only these helpers on timeout. No UI/send action.
+if (args.Length == 2 && args[0] == "--memory-worker")
+    return await MemoryNativeWorker.RunAsync(args[1]);
+
+#if PORTABLE_RELEASE
+// Distributed host accepts only the private desktop OCR protocol.
+return 2;
+#else
 if (args.Length == 4 && args[0] == "--capture-worker")
 {
     var hwnd = (nint)long.Parse(args[1], NumberStyles.HexNumber, CultureInfo.InvariantCulture);
@@ -439,3 +446,4 @@ static async Task<int> SaveEnvelopes(BuyerMessageBatch batch, string sellerId = 
     Console.WriteLine($"Adapter emitted {count} envelope(s). No external consumer invoked.");
     return count;
 }
+#endif

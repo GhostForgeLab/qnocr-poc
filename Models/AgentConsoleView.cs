@@ -12,4 +12,5 @@ public sealed record AgentConsolePreviewRow(string MessageId, AssistedReplyView 
 
 public sealed record AgentConsoleConversation(MessageSession Session,
     IReadOnlyList<AgentConsoleTimelineMessage> Timeline,
-    IReadOnlyList<AgentConsolePreviewRow> Previews);
+    IReadOnlyList<AgentConsolePreviewRow> Previews,
+    bool CanClearProduct = true, IReadOnlyList<string>? Notices = null);

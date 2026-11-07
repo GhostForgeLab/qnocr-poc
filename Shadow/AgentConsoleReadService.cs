@@ -4,7 +4,7 @@ using QnocrPoc.Models;
 namespace QnocrPoc.Shadow;
 
 /// <summary>Read-only per-run projection over existing Shadow state; no new capture or AI call.</summary>
-public sealed class AgentConsoleReadService
+public sealed partial class AgentConsoleReadService
 {
     private readonly string _state;
     private readonly string _run;
@@ -21,6 +21,7 @@ public sealed class AgentConsoleReadService
             ? Path.Combine(_run, "summary.json") : Path.Combine(_run, "session.json");
         using var document = JsonDocument.Parse(File.ReadAllText(metadata));
         var root = document.RootElement;
+        _agentMode = root.TryGetProperty("Mode", out var mode) && mode.GetString() == "ShadowReplyPreview";
         var paired = root.GetProperty("StateDirectory").GetString();
         if (paired is null || !string.Equals(Path.GetFullPath(paired), _state,
             StringComparison.OrdinalIgnoreCase) ||
@@ -32,6 +33,7 @@ public sealed class AgentConsoleReadService
 
     public IReadOnlyList<AgentConsoleSessionRow> ListSessions()
     {
+        if (_agentMode) return AgentSessions();
         var previews = Previews();
         return previews.GroupBy(preview => preview.SessionId, StringComparer.Ordinal)
             .Select(group =>
@@ -48,6 +50,7 @@ public sealed class AgentConsoleReadService
 
     public AgentConsoleConversation GetConversation(string sessionId)
     {
+        if (_agentMode) return AgentConversation(sessionId);
         var session = ReadSession(sessionId);
         var previews = Previews().Where(preview => preview.SessionId == sessionId)
             .OrderBy(preview => preview.CreatedAt).ToArray();
@@ -110,6 +113,8 @@ public sealed class AgentConsoleReadService
 
     private IReadOnlyList<ReplyPreview> Previews()
     {
+        if (_agentMode) return AgentBatches().SelectMany(batch => batch.Results)
+            .Where(result => result.Preview is not null).Select(result => ValidateAgentPreview(result)).ToArray();
         var outbox = Path.Combine(_state, "outbox");
         if (!Directory.Exists(outbox)) return [];
         var found = new List<ReplyPreview>();

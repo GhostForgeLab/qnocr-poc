@@ -6,13 +6,17 @@ namespace QnocrPoc.Extension.AgentContext;
 /// <summary>Maps an accepted Agent snapshot to the existing classifier contract; never borrows other sessions.</summary>
 public static class AgentContextIntentAdapter
 {
-    public static SessionContextView Build(AgentSession session, string messageId, DateTimeOffset capturedAt)
+    public static SessionContextView Build(AgentSession session, string messageId, DateTimeOffset capturedAt,
+        int maxRecentMessages = JEVIntentClassifier.MaxRecentMessages, int maxContextCharacters = JEVIntentClassifier.MaxContextCharacters,
+        bool orderByTimestamp = false)
     {
         ArgumentNullException.ThrowIfNull(session);
         ArgumentException.ThrowIfNullOrWhiteSpace(messageId);
+        if (maxRecentMessages is < 0 or > 19 || maxContextCharacters is < 1000 or > 12000) throw new ArgumentOutOfRangeException(nameof(maxRecentMessages));
         if (session.Status != AgentSessionStatus.Active || session.Messages.Any(message =>
             message.SessionId != session.SessionId || message.Source != session.Identity.Source))
             throw new InvalidDataException("Intent requires a current, isolated Agent session.");
+        if (orderByTimestamp) session = session with { Messages = Array.AsReadOnly(session.Messages.OrderBy(m => m.Timestamp).ToArray()) };
         var index = Enumerable.Range(0, session.Messages.Count)
             .Single(i => session.Messages[i].MessageId == messageId);
         var current = session.Messages[index];
@@ -23,8 +27,8 @@ public static class AgentContextIntentAdapter
         var recent = session.Messages.Take(index).Where(message =>
                 message.Role.Equals("buyer", StringComparison.OrdinalIgnoreCase) ||
                 message.Role.Equals("seller", StringComparison.OrdinalIgnoreCase))
-            .TakeLast(JEVIntentClassifier.MaxRecentMessages).Reverse().ToArray();
-        var remaining = JEVIntentClassifier.MaxContextCharacters - JEVIntentClassifier.MaxBuyerQuestionCharacters;
+            .TakeLast(maxRecentMessages).Reverse().ToArray();
+        var remaining = maxContextCharacters - JEVIntentClassifier.MaxBuyerQuestionCharacters;
         var bounded = new List<EnvelopeMessage>();
         foreach (var prior in recent)
         {

@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text.RegularExpressions;
+using System.Text;
 using OpenCvSharp;
 using QnocrPoc.Models;
 using QnocrPoc.Product;
@@ -7,27 +8,29 @@ using QnocrPoc.Product;
 namespace QnocrPoc.Messages;
 
 /// <summary>Conservative light-theme, left-buyer layout rules; never reads UIA text or invents timestamps.</summary>
-public sealed class BuyerMessageStructurer
+public sealed class BuyerMessageStructurer(bool includeVisualPreviews = false, bool includeSellerMessages = false)
 {
-    private static readonly Regex TimestampPattern = new(@"(?<![0-9])(?<y>[0-9]{4})-(?<m>[0-9]{1,2})-(?<d>[0-9]{1,2})\s+(?<h>[0-9]{1,2}):(?<min>[0-9]{2}):(?<s>[0-9]{2})(?![0-9])",
+    // OCR often drops the date/time space. The joined form must retain a two-digit day and
+    // two-digit hour, so the boundary is unambiguous; partial/ambiguous timestamps still fail.
+    private static readonly Regex TimestampPattern = new(@"(?<![0-9])(?<y>[0-9]{4})-(?<m>[0-9]{1,2})-(?:(?<d>[0-9]{1,2})\s+(?<h>[0-9]{1,2})|(?<d>[0-9]{2})(?<h>[0-9]{2})):(?<min>[0-9]{2}):(?<s>[0-9]{2})(?![0-9])",
         RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100));
-    private static readonly Regex TextContent = new(@"[\p{L}\p{N}]", RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100));
+    private static bool HasContent(string text) => text.EnumerateRunes().Any(r => Rune.IsLetterOrDigit(r) || Rune.IsPunctuation(r) || Rune.IsSymbol(r));
 
     public BuyerMessageBatch Structure(OcrResult ocr, string productId = "", string productBinding = "None")
     {
         ArgumentNullException.ThrowIfNull(ocr);
+        return Structure(ocr, File.ReadAllBytes(ocr.ImagePath), productId, productBinding);
+    }
+
+    public BuyerMessageBatch Structure(OcrResult ocr, byte[] bytes, string productId = "", string productBinding = "None")
+    {
+        ArgumentNullException.ThrowIfNull(ocr);
         if (productId != "" && !ProductIdExtractor.IsValidProductId(productId)) throw new ArgumentException("Invalid product context ID.", nameof(productId));
-        var bytes = File.ReadAllBytes(ocr.ImagePath);
         using var image = Cv2.ImDecode(bytes, ImreadModes.Color);
         if (image.Empty()) throw new InvalidDataException("Message source image cannot be decoded.");
-        using var mask = new Mat();
-        Cv2.InRange(image, new Scalar(250, 250, 250), new Scalar(255, 255, 255), mask);
-        Cv2.FindContours(mask, out OpenCvSharp.Point[][] contours, out _, RetrievalModes.External, ContourApproximationModes.ApproxSimple);
-        var bubbles = contours.Select(contour => (Bounds: Cv2.BoundingRect(contour), Area: Cv2.ContourArea(contour)))
-            .Where(item => item.Bounds.Left >= image.Width * .09 && item.Bounds.Left <= image.Width * .30 &&
-                item.Bounds.Right <= image.Width * .92 && item.Bounds.Width >= 18 && item.Bounds.Height >= 20 &&
-                item.Area >= item.Bounds.Width * (double)item.Bounds.Height * .65)
-            .Select(item => item.Bounds).OrderBy(bounds => bounds.Top).ThenBy(bounds => bounds.Left).ToArray();
+        var buyerBubbles = MessageVisualRegions.Locate(image, includeVisualPreviews);
+        var sellerBubbles = includeSellerMessages ? MessageVisualRegions.LocateSeller(image) : Array.Empty<Rect>();
+        var bubbles = buyerBubbles.Concat(sellerBubbles).Distinct().OrderBy(r => r.Top).ThenBy(r => r.Left).ToArray();
         var messages = new List<BuyerMessage>();
         var evidence = new List<BuyerMessageEvidence>();
         var review = new List<MessageReviewItem>();
@@ -35,16 +38,19 @@ public sealed class BuyerMessageStructurer
 
         foreach (var bubble in bubbles)
         {
+            var role = sellerBubbles.Contains(bubble) ? "seller" : "buyer";
             var body = ocr.Lines.Where(line => BelongsTo(line.Bounds, bubble)).OrderBy(line => line.Bounds.Y).ThenBy(line => line.Bounds.X).ToArray();
-            if (body.Length == 0) continue;
+            using var crop = new Mat(image, bubble);
+            var unrecognized = body.Length == 0;
+            if (unrecognized && (!includeVisualPreviews || !MessageVisualRegions.HasInk(crop))) continue;
             foreach (var line in body) consumed.Add(line.Number);
-            var text = string.Join("\n", body.Select(line => line.Text));
+            var text = unrecognized ? "[消息内容未识别，请查看原图]" : string.Join("\n", body.Select(line => line.Text));
             var numbers = body.Select(line => line.Number).ToArray();
             string? reason = null;
             if (bubble.Top <= 1 || bubble.Bottom >= image.Height - 1) reason = "ClippedBubble";
             else if (body.Any(line => !Reliable(line))) reason = "LowConfidenceBody";
-            else if (!TextContent.IsMatch(text)) reason = "NonTextOrPunctuationOnly";
-            var header = reason is null ? FindHeader(ocr.Lines, bubble, bubbles, image) : null;
+            else if (!HasContent(text)) reason = "EmptyOrControlOnly";
+            var header = reason is null ? FindHeader(ocr.Lines, bubble, bubbles, image, role) : null;
             if (reason is null && header is null) reason = "MissingReliableFullTimestampAndBuyerHeader";
             if (reason is not null)
             {
@@ -52,7 +58,13 @@ public sealed class BuyerMessageStructurer
                 continue;
             }
             foreach (var line in header!.Value.Lines) consumed.Add(line.Number);
-            messages.Add(new BuyerMessage { Text = text, Timestamp = header.Value.Time, ProductId = productId });
+            var visual = includeVisualPreviews && (unrecognized || MessageVisualRegions.HasColor(crop));
+            var preview = visual ? MessageVisualRegions.Preview(crop) : null;
+            // Animated stickers change pixels every frame; their timestamp/slot identity must not.
+            var slot = messages.Count(m => m.Role == role && m.Timestamp == header.Value.Time && m.ContentKind == "Unrecognized");
+            messages.Add(new BuyerMessage { Role = role, Text = text, Timestamp = header.Value.Time, ProductId = productId,
+                ContentKind = unrecognized ? "Unrecognized" : visual ? "Mixed" : "Text",
+                VisualFingerprint = unrecognized ? Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes($"visual:{header.Value.Time:O}:{slot}"))) : "", PreviewPng = preview });
             evidence.Add(new(messages.Count - 1, Bounds(bubble), numbers, header.Value.Lines.Select(line => line.Number).Distinct().ToArray(),
                 body.Concat(header.Value.Lines).Min(line => (double)line.Confidence!.Value)));
         }
@@ -64,12 +76,12 @@ public sealed class BuyerMessageStructurer
                 ? "UnassignedHeaderOrStatus" : "NotConfirmedBuyerBubbleOrRole";
             review.Add(new(line.Text, reason, [line.Number], line.Bounds));
         }
-        return new(Path.GetFullPath(ocr.ImagePath), Convert.ToHexString(SHA256.HashData(bytes)), messages, evidence, review,
+        return new(ocr.ImagePath.StartsWith("memory:", StringComparison.Ordinal) ? ocr.ImagePath : Path.GetFullPath(ocr.ImagePath), Convert.ToHexString(SHA256.HashData(bytes)), messages, evidence, review,
             productId == "" ? "None" : productBinding,
             "Timestamp is the full date/time displayed in the screenshot (DateTimeKind.Unspecified); no capture-time substitution or timezone inference.");
     }
 
-    private static (DateTime Time, OcrLine[] Lines)? FindHeader(IReadOnlyList<OcrLine> lines, Rect bubble, Rect[] bubbles, Mat image)
+    private static (DateTime Time, OcrLine[] Lines)? FindHeader(IReadOnlyList<OcrLine> lines, Rect bubble, Rect[] bubbles, Mat image, string role)
     {
         var candidates = new List<(DateTime Time, OcrLine[] Lines, int Bottom)>();
         foreach (var line in lines)
@@ -90,7 +102,9 @@ public sealed class BuyerMessageStructurer
             }
             catch (ArgumentOutOfRangeException) { continue; }
             var prefix = normalized[..match.Index].Trim();
-            if (prefix.Length > 0 && Math.Abs(line.Bounds.X - bubble.Left) <= image.Width * .06)
+            var suffix = normalized[(match.Index + match.Length)..].Trim();
+            if (role == "buyer" && prefix.Length > 0 && Math.Abs(line.Bounds.X - bubble.Left) <= image.Width * .06 ||
+                role == "seller" && (prefix.Length > 0 || suffix.Length > 0) && Math.Abs(line.Bounds.X + line.Bounds.Width - bubble.Right) <= image.Width * .08)
             {
                 candidates.Add((time, [line], (int)bottom));
                 continue;
@@ -98,11 +112,13 @@ public sealed class BuyerMessageStructurer
             var names = lines.Where(name => name.Number != line.Number && Reliable(name) &&
                 !TimestampPattern.IsMatch(NormalizeWidth(name.Text)) && IsGrayHeader(name.Bounds, image) &&
                 !bubbles.Any(bounds => BelongsTo(name.Bounds, bounds)) &&
-                Math.Abs(name.Bounds.X - bubble.Left) <= image.Width * .06 &&
+                (role == "buyer" ? Math.Abs(name.Bounds.X - bubble.Left) <= image.Width * .06 &&
                 // OCR's rotated bounding rectangles can overlap although the header glyphs do not.
                 // Permit at most half a line height; keep the same-row, gray, unique-name checks.
                 name.Bounds.X + (long)name.Bounds.Width <= line.Bounds.X + Math.Max(3, Math.Max(name.Bounds.Height, line.Bounds.Height) * .5) &&
-                line.Bounds.X - (name.Bounds.X + (long)name.Bounds.Width) <= Math.Max(name.Bounds.Height, line.Bounds.Height) * 2L &&
+                line.Bounds.X - (name.Bounds.X + (long)name.Bounds.Width) <= Math.Max(name.Bounds.Height, line.Bounds.Height) * 2L
+                : Math.Abs(Math.Max(name.Bounds.X + name.Bounds.Width, line.Bounds.X + line.Bounds.Width) - bubble.Right) <= image.Width * .08 &&
+                  Math.Max(name.Bounds.X, line.Bounds.X) - Math.Min(name.Bounds.X + name.Bounds.Width, line.Bounds.X + line.Bounds.Width) <= Math.Max(name.Bounds.Height, line.Bounds.Height) * 2L) &&
                 Math.Abs(name.Bounds.Y + name.Bounds.Height / 2d - line.Bounds.Y - line.Bounds.Height / 2d) <= Math.Max(name.Bounds.Height, line.Bounds.Height) * .5).ToArray();
             if (names.Length == 1) candidates.Add((time, [names[0], line], (int)bottom));
         }

@@ -14,6 +14,11 @@ if (args.Length == 2 && args[0] == "--provider-live-smoke")
 var root = Path.GetFullPath(Path.Combine("Output", "ValidationV04"));
 Directory.CreateDirectory(root);
 var passed = 0;
+if (args.Length == 1 && args[0] == "--messages-only")
+{
+    MessageChecks.Run((pass, name) => { if (!pass) throw new Exception("FAIL: " + name); passed++; Console.WriteLine("PASS: " + name); });
+    Console.WriteLine($"Passed {passed} message checks."); return 0;
+}
 void Check(bool condition, string message)
 {
     if (!condition) throw new Exception("FAIL: " + message);

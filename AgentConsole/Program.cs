@@ -5,17 +5,24 @@ using QnocrPoc.Product;
 using QnocrPoc.Shadow;
 
 string? state = null, run = null;
+string? demoRoot = null;
 var port = 18730;
 for (var index = 0; index < args.Length; index += 2)
 {
     if (index + 1 >= args.Length) throw new ArgumentException("Use --state-dir DIR --run-dir RUN [--port NUMBER].");
     if (args[index] == "--state-dir") state = Path.GetFullPath(args[index + 1]);
+    else if (args[index] == "--demo-root") demoRoot = Path.GetFullPath(args[index + 1]);
     else if (args[index] == "--run-dir") run = Path.GetFullPath(args[index + 1]);
     else if (args[index] == "--port" && int.TryParse(args[index + 1], out var parsed) && parsed is >= 1024 and <= 65535)
         port = parsed;
     else throw new ArgumentException("Use --state-dir DIR --run-dir RUN [--port NUMBER].");
 }
-if (state is null || run is null) throw new ArgumentException("Both --state-dir and --run-dir are required.");
+if (demoRoot is not null)
+{
+    if (state is not null || run is not null) throw new ArgumentException("Demo requires its own state and run directories.");
+    (state, run) = await AgentConsoleDemo.CreateAsync(demoRoot);
+}
+if (state is null || run is null) throw new ArgumentException("Both --state-dir and --run-dir are required, or use --demo-root DIR.");
 var accessToken = Environment.GetEnvironmentVariable("QN_AGENT_CONSOLE_TOKEN");
 if (string.IsNullOrWhiteSpace(accessToken) || accessToken.Length < 24 || !accessToken.All(Uri.IsHexDigit))
     accessToken = Convert.ToHexString(RandomNumberGenerator.GetBytes(24));
@@ -54,7 +61,7 @@ app.Use(async (context, next) =>
         await context.Response.WriteAsync(AgentConsolePages.Error(ex.Message, accessToken));
     }
 });
-app.MapGet("/", () => Results.Content(AgentConsolePages.Home(read.ListSessions(), accessToken),
+app.MapGet("/", () => Results.Content(AgentConsolePages.Home(read.ListSessions(), accessToken, demoRoot is not null),
     "text/html; charset=utf-8"));
 app.MapGet("/session/{id}", (string id) => Results.Content(
     AgentConsolePages.Conversation(read.GetConversation(id), accessToken), "text/html; charset=utf-8"));
@@ -95,6 +102,8 @@ app.MapPost("/session/{id}/clear-product", async (string id, HttpContext context
 {
     read.RequireVisibleSession(id);
     var conversation = read.GetConversation(id);
+    if (!conversation.CanClearProduct)
+        throw new InvalidOperationException("This capture exposes a read-only product snapshot.");
     if (conversation.Session.CurrentProductContext?.Source != ProductContextSource.Manual)
         throw new InvalidOperationException("Only a manually bound current product can be cleared here.");
     var form = await context.Request.ReadFormAsync();

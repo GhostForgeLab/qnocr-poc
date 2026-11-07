@@ -12,16 +12,22 @@
     <RestorePackagesPath>$(MSBuildThisFileDirectory).tools/nuget</RestorePackagesPath>
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
   </PropertyGroup>
+  <PropertyGroup Condition="'$(PortableRelease)' == 'true'">
+    <DefineConstants>$(DefineConstants);PORTABLE_RELEASE</DefineConstants>
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+  </PropertyGroup>
   <ItemGroup>
     <Using Include="System.IO" />
     <Compile Remove="Validation/**/*.cs" />
     <Compile Remove="Output/**/*.cs" />
     <Compile Remove="KnowledgeConsole/**/*.cs" />
     <Compile Remove="AgentConsole/**/*.cs" />
+    <Compile Remove="DesktopClient/**/*.cs" />
     <Compile Remove="Integration/**/*.cs" />
     <Compile Remove="RuntimeObserver/Program.cs" />
     <Compile Remove="RuntimeObserver/obj/**/*.cs" />
-    <None Update="Product/product-profiles.sample.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Update="Product/product-profiles.sample.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Condition="'$(PortableRelease)' != 'true'" />
     <PackageReference Include="Sdcb.PaddleOCR" Version="3.3.1" />
     <PackageReference Include="Sdcb.PaddleOCR.Models.Local" Version="3.3.1" />
     <PackageReference Include="Sdcb.PaddleInference.runtime.win64.mkl" Version="3.3.1.70" />

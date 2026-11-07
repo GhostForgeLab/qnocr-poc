@@ -100,6 +100,7 @@ public static class AgentContextCaptureCommand
         {
             Version = replyEnabled ? "1.35.0-C" : knowledgeEnabled ? "1.35.0-B" : intentEnabled ? "1.35.0-A" : "1.34.0-B", Mode = mode, StartedAt = startedAt,
             DatabasePath = databasePath, TestPrefix = prefix, ExpectedBuyerLabel = expectedBuyerLabel, SellerId = sellerId,
+            StateDirectory = replyEnabled ? Path.GetFullPath(replyState!) : null,
             NormalizedExpectedBuyerLabel = normalizedExpectedBuyerLabel,
             WindowHandle = handle, WindowTitle = window.WindowTitle,
             IdentityLevel = "Observed", frames, interval,
@@ -219,6 +220,7 @@ public static class AgentContextCaptureCommand
         Write(Path.Combine(output, "summary.json"), new
         {
             Mode = mode, StartedAt = startedAt, EndedAt = DateTimeOffset.UtcNow,
+            StateDirectory = replyEnabled ? Path.GetFullPath(replyState!) : null,
             CompletedFrames = completedFrames, FailedFrames = failedFrames, OcrCalls = ocrCalls,
             Envelopes = envelopes, DuplicateChecks = duplicateChecks, Sessions = sessions.Count,
             StoredMessages = sessions.Sum(s => s.Messages.Count),
@@ -245,5 +247,5 @@ public static class AgentContextCaptureCommand
     private static string ObservedId(string role, string label) =>
         "observed:" + role + ":" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(label))).ToLowerInvariant();
 
-    private static void Write<T>(string path, T value) => File.WriteAllText(path, JsonSerializer.Serialize(value, Json));
+    private static void Write<T>(string path, T value) => AtomicJson.Write(path, value);
 }

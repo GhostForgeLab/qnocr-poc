@@ -25,9 +25,10 @@ internal static class AgentConsolePages
     public static string Error(string message, string token) => Page("操作未完成",
         "<section><h1>操作未完成</h1><p>" + H(message) + "</p><a href='/" + Query(token) + "'>返回工作台</a></section>");
 
-    public static string Home(IReadOnlyList<AgentConsoleSessionRow> sessions, string token)
+    public static string Home(IReadOnlyList<AgentConsoleSessionRow> sessions, string token, bool demo = false)
     {
         var html = new StringBuilder("<h1>Agent Console · 客服辅助工作台</h1>");
+        if (demo) html.Append("<section><strong>本地演示</strong><p>以下为合成买家消息。已执行实际上下文、规则意图、知识检查和人工预览流程；缺少商品资料时显示人工核实建议。本演示未连接千牛或外部 AI。</p></section>");
         html.Append("<p class='muted'>仅显示所选Shadow运行批次。AI只生成建议；复制后由客服在千牛人工粘贴发送。系统发送数始终为0。</p>")
             .Append("<section><h2>会话列表</h2><table><thead><tr><th>SessionId</th><th>Buyer</th><th>LastMessage</th><th>UpdatedAt</th><th>预览数</th></tr></thead><tbody>");
         foreach (var session in sessions)
@@ -63,11 +64,11 @@ internal static class AgentConsolePages
                 .Append("</p><p>绑定人/依据：").Append(H(product.BoundBy))
                 .Append("</p><p>时间：").Append(H(product.CapturedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")))
                 .Append("</p></div>");
-            if (product.Source == ProductContextSource.Manual)
+            if (product.Source == ProductContextSource.Manual && conversation.CanClearProduct)
                 html.Append("<form method='post' action='/session/").Append(H(session.SessionId))
                     .Append("/clear-product").Append(Query(token)).Append("'>").Append(Actor())
                     .Append("<button class='warn'>清除当前人工商品绑定</button></form>");
-            else html.Append("<small>OCR绑定由下一次当前窗口采集更新；此处不手动清除OCR证据。</small>");
+            else html.Append("<small>商品信息为采集时快照，由后续采集更新。</small>");
         }
         html.Append("</section><section><h2>买家消息时间线</h2><table><thead><tr><th>时间</th><th>角色</th><th>内容</th><th>来源</th></tr></thead><tbody>");
         foreach (var message in conversation.Timeline)
@@ -76,6 +77,8 @@ internal static class AgentConsolePages
                 .Append(H(message.Text)).Append("</td><td>").Append(H(message.Source)).Append("</td></tr>");
         if (conversation.Timeline.Count == 0) html.Append("<tr><td colspan='4'>暂无已派发消息。</td></tr>");
         html.Append("</tbody></table></section><section><h2>AI助手与回复建议</h2>");
+        foreach (var notice in conversation.Notices ?? [])
+            html.Append("<p class='muted'>").Append(H(notice)).Append("</p>");
         foreach (var preview in conversation.Previews)
         {
             var view = preview.View;

@@ -8,6 +8,9 @@ namespace QnocrPoc.Layout;
 
 public sealed class QianniuLayoutResolver
 {
+    public ResolvedLayout Resolve(Mat image) => ResolveCore(image,
+        UiaGeometryProbe.Unavailable("UIA skipped: in-memory frame"), Stopwatch.StartNew());
+
     public async Task<ResolvedLayout> ResolveAsync(string screenshotPath, QianniuWindow? window = null)
     {
         var timer = Stopwatch.StartNew();

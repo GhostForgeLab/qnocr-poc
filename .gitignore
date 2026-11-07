@@ -5,3 +5,14 @@ Output/*
 !Output/.gitkeep
 KnowledgeConsole/Output/
 AgentConsole/Output/
+
+# Local credentials and runtime/business data
+.env
+.env.*
+!.env.example
+Data/
+SmokeData/
+*.qnbak
+*.user
+*.suo
+.vs/

@@ -55,6 +55,14 @@ internal static class MessageChecks
             "multiline OCR is grouped inside one buyer bubble without header text");
         check(result.Messages[0].Timestamp == new DateTime(2026, 9, 24, 19, 51, 45) && result.Messages[0].Timestamp.Kind == DateTimeKind.Unspecified,
             "timestamp comes from screenshot header; no current-date or timezone substitution");
+        var joined = parser.Structure(Ocr(source, header with { Text = "buyer01 2026-9-2419:51:45" }, first, second));
+        check(joined.Messages.Count == 1 && joined.Messages[0].Timestamp == result.Messages[0].Timestamp,
+            "full timestamp remains valid when OCR removes the date-time space");
+        check(parser.Structure(Ocr(source, header with { Text = "buyer01 ２０２６－９－２４１９：５１：４５" }, first, second)).Messages.Count == 1,
+            "joined timestamps also retain existing full-width normalization");
+        foreach (var joinedInvalid in new[] { "buyer01 2026-9-2419:51", "buyer01 2026-9-2429:51:45", "buyer01 2026-9-419:51:45", "buyer01 2026-2-3019:51:45" })
+            check(parser.Structure(Ocr(source, header with { Text = joinedInvalid }, first, second)).Messages.Count == 0,
+                "joined timestamps still reject partial, invalid or ambiguous components: " + joinedInvalid);
         check(result.Messages[0].ProductId == "" && result.ProductBinding == "None" && result.Messages[0].Source == "Qianniu.PaddleOCR",
             "unknown product remains empty and source is explicit");
         check(result.Evidence.Count == 1 && result.Evidence[0].BodyLineNumbers.SequenceEqual(new[] { 2, 3 }) && result.ImageSha256.Length == 64,
@@ -106,7 +114,38 @@ internal static class MessageChecks
         var repeated = parser.Structure(Ocr(two, header, first, Line(4, "buyer01 2026-9-24 19:52:00", new(100, 300, 360, 25)), Line(5, first.Text, new(112, 352, 280, 30))));
         check(repeated.Messages.Count == 2 && repeated.Messages[0].Timestamp != repeated.Messages[1].Timestamp,
             "identical text in separate timestamped bubbles stays two messages (no cross-message deduplication)");
-        check(parser.Structure(Ocr(source, header, first with { Text = "👍" })).Messages.Count == 0, "nontext emoji-only evidence stays review-only");
+        foreach (var punctuation in new[] { "？？？", "……", "！", "👍", "😊❤️", "[微笑]", "价格？😊" })
+            check(parser.Structure(Ocr(source, header, first with { Text = punctuation })).Messages.Single().Text == punctuation,
+                "trusted bubble preserves punctuation/symbols: " + punctuation);
+        check(parser.Structure(Ocr(source, header, first with { Text = "\u200B" })).Messages.Count == 0, "control-only body remains unaccepted");
+        var visualParser = new BuyerMessageStructurer(true);
+        var visual = visualParser.Structure(Ocr(source, header)).Messages.Single();
+        check(visual.ContentKind == "Unrecognized" && visual.PreviewPng is { Length: > 0 } && visual.Text.Contains("未识别"),
+            "unreadable body retains image preview with explicit uncertainty and verified header");
+        check(visualParser.Structure(Ocr(source)).Messages.Count == 0, "visual-only region still requires buyer and full timestamp proof");
+        check(!System.Text.Json.JsonSerializer.Serialize(visual).Contains("PreviewPng"), "preview bytes are not persisted in message JSON");
+        using (var sticker = new Bitmap(800, 500))
+        using (var graphics = Graphics.FromImage(sticker))
+        using (var font = new Font("Microsoft YaHei", 18, FontStyle.Regular, GraphicsUnit.Pixel))
+        using (var grayBrush = new SolidBrush(Color.FromArgb(153, 153, 153)))
+        {
+            graphics.Clear(Color.FromArgb(240, 242, 245));
+            graphics.DrawString(header.Text, font, grayBrush, 100, 80);
+            graphics.FillEllipse(Brushes.OrangeRed, 100, 120, 65, 65);
+            using var png = new MemoryStream(); sticker.Save(png, ImageFormat.Png);
+            var standalone = visualParser.Structure(Ocr("memory:sticker", header), png.ToArray());
+            check(standalone.Messages.Count == 1 && standalone.Messages[0].ContentKind == "Unrecognized", "standalone colored sticker with reliable buyer/time is visible as a preview");
+            check(visualParser.Structure(Ocr("memory:sticker"), png.ToArray()).Messages.Count == 0, "standalone colored region without header is not attributed to a buyer");
+        }
+        var changedVisual = Fixture("visual-next-frame");
+        using (var pixels = new Bitmap(changedVisual))
+        {
+            pixels.SetPixel(150, 150, Color.Red);
+            var bytes = new MemoryStream(); pixels.Save(bytes, ImageFormat.Png);
+            var animation = visualParser.Structure(Ocr(changedVisual, header), bytes.ToArray()).Messages.Single();
+            check(MessageFingerprint.ConversationMessageKey(animation) == MessageFingerprint.ConversationMessageKey(visual),
+                "animated pixels do not generate repeated arrivals for one timestamped visual message");
+        }
         try { parser.Structure(Ocr(source, header, first), "not-an-id"); check(false, "invalid product ID rejected"); }
         catch (ArgumentException) { check(true, "invalid product ID rejected"); }
     }

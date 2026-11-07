@@ -14,7 +14,8 @@ public sealed class SessionRegistry(string stateRoot, string runId, string? mapp
 
     public static string? ReadBuyer(BuyerMessageBatch batch, OcrResult ocr)
     {
-        var labels = batch.Evidence.Select(e => string.Join(" ", e.HeaderLineNumbers.Select(n => ocr.Lines.Single(l => l.Number == n).Text)))
+        var labels = batch.Evidence.Where(e => batch.Messages[e.MessageIndex].Role == "buyer")
+            .Select(e => string.Join(" ", e.HeaderLineNumbers.Select(n => ocr.Lines.Single(l => l.Number == n).Text)))
             .Select(text => DateText.Replace(MessageFingerprint.NormalizeText(text), "").Trim(' ', ':', '-', '|'))
             .Where(text => text.Length > 0).ToArray();
         var distinct = labels.Distinct(StringComparer.Ordinal).ToArray();
